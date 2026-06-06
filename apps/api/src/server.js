@@ -95,7 +95,29 @@ export function createAppServer({ adapter = createAdapterFromEnv(), pollingConfi
       }
       if (url.pathname === '/api/dashboard') {
         const snapshot = await polling.snapshot({ force: url.searchParams.get('force') === 'true' });
-        json(res, 200, buildDashboardState(snapshot));
+        json(res, 200, buildDashboardState(snapshot, { service: { ok: true } }));
+        return;
+      }
+      if (url.pathname === '/api/readiness') {
+        const snapshot = await polling.snapshot({ force: url.searchParams.get('force') === 'true' });
+        const dashboard = buildDashboardState(snapshot, { service: { ok: true } });
+        const productionReadiness = dashboard.productionReadiness;
+        json(res, 200, {
+          ok: true,
+          serviceOk: true,
+          service: 'kospi-dashboard-api',
+          status: productionReadiness.status,
+          ready: productionReadiness.liveReady,
+          liveReady: productionReadiness.liveReady,
+          safeToServe: productionReadiness.safeToServe,
+          nonAdvice: NON_ADVICE_NOTICE,
+          polling: snapshot.polling,
+          observedAt: snapshot.observedAt ?? null,
+          polledAt: snapshot.polledAt ?? null,
+          sourceStatus: dashboard.sourceStatus,
+          quantReadiness: dashboard.quantReadiness,
+          productionReadiness,
+        });
         return;
       }
       await serveStatic(req, res);

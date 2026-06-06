@@ -5,14 +5,18 @@ import {
   DERIVATIVES_MARKET_STATUS,
   FRESHNESS,
   PROBABILITY_STATUS,
+  PRODUCTION_READINESS_STATUS,
   buildDerivativesMarketContext,
   buildExpirySettlementRisk,
+  buildProductionReadinessAssessment,
   buildQuantReadinessAssessment,
   buildRiskAlerts,
   classifyFreshness,
   computeDownsideProbability,
   createProvenance,
   evaluateLiveSourceApproval,
+  hasUnsafePublicDiagnostics,
+  normalizeHolidaySet,
   normalizePollingConfig,
   secondThursday,
   summarizeFreshness,
@@ -49,6 +53,19 @@ test('KOSPI200 monthly expiry helper computes second Thursday and settlement', (
   assert.equal(risk.futuresMonthlyFinalTradingDay, '2026-06-11');
   assert.equal(risk.futuresMonthlyFinalSettlementDay, '2026-06-12');
   assert.equal(risk.riskLevel, 'high');
+});
+
+test('KOSPI200 monthly expiry applies only non-empty normalized holiday date arrays', () => {
+  const empty = buildExpirySettlementRisk({ asOf: utcDate(2026, 5, 10), holidays: new Set() });
+  assert.equal(empty.holidayAdjustment, 'unknown');
+  const invalid = buildExpirySettlementRisk({ asOf: utcDate(2026, 5, 10), holidays: ['2026-02-30'] });
+  assert.equal(invalid.holidayAdjustment, 'unknown');
+  const adjusted = buildExpirySettlementRisk({ asOf: utcDate(2026, 5, 10), holidays: ['2026-06-12'] });
+  assert.equal(adjusted.holidayAdjustment, 'applied');
+  assert.equal(adjusted.futuresMonthlyFinalSettlementDay, '2026-06-15');
+  const finalTradingHoliday = buildExpirySettlementRisk({ asOf: utcDate(2026, 5, 9), holidays: ['2026-06-11'] });
+  assert.equal(finalTradingHoliday.futuresMonthlyFinalTradingDay, '2026-06-10');
+  assert.equal(finalTradingHoliday.futuresMonthlyFinalSettlementDay, '2026-06-12');
 });
 
 test('probability is unavailable without required inputs', () => {
@@ -163,6 +180,17 @@ test('KOSPI200 monthly expiry rolls forward after settlement window passes', () 
   assert.ok(risk.daysToMonthlyFinalTrading > 0);
 });
 
+test('KOSPI200 monthly expiry applies normalized holiday date arrays', () => {
+  const holidays = normalizeHolidaySet(['2026-06-12']);
+  const risk = buildExpirySettlementRisk({ asOf: utcDate(2026, 5, 10), holidays });
+  assert.equal(risk.futuresMonthlyFinalTradingDay, '2026-06-11');
+  assert.equal(risk.futuresMonthlyFinalSettlementDay, '2026-06-15');
+  assert.equal(risk.holidayAdjustment, 'applied');
+  assert.equal(risk.settlementBasis, 'holiday-adjusted calendar');
+  assert.equal(normalizeHolidaySet(['2026-02-30']), null);
+  assert.equal(normalizeHolidaySet('2026-06-12'), null);
+});
+
 test('probability degrades and ignores optional volatility value without provenance', () => {
   const result = computeDownsideProbability({
     historicalMondayDownRate: 0.52,
@@ -227,7 +255,7 @@ test('derivatives market context preserves fresh metric provenance', () => {
         optionsVolume: 40,
         putCallRatio: 1.2,
         foreignerNetFutures: -5,
-        holidayCalendar: 'fixture',
+        holidayCalendar: ['2026-06-03'],
       },
     },
     expirySettlement: { riskLevel: 'normal' },
@@ -289,7 +317,7 @@ test('derivatives market context rejects invalid numeric metric values', () => {
         optionsVolume: 40,
         putCallRatio: 1.2,
         foreignerNetFutures: -5,
-        holidayCalendar: 'fixture',
+        holidayCalendar: ['2026-06-03'],
       },
     },
     expirySettlement: { riskLevel: 'normal' },
@@ -369,7 +397,7 @@ test('quant readiness can reach analysis-review-ready with mock-quality inputs b
       optionsVolume: 40,
       putCallRatio: 1.2,
       foreignerNetFutures: -5,
-      holidayCalendar: 'fixture',
+      holidayCalendar: ['2026-06-03'],
     },
   };
   const expirySettlement = buildExpirySettlementRisk({ asOf: utcDate(2026, 5, 6) });
@@ -424,7 +452,7 @@ test('quant readiness rejects fresh unknown adapters without explicit approval c
       optionsVolume: 40,
       putCallRatio: 1.2,
       foreignerNetFutures: -5,
-      holidayCalendar: 'fixture',
+      holidayCalendar: ['2026-06-03'],
     },
   };
   const expirySettlement = buildExpirySettlementRisk({ asOf: utcDate(2026, 5, 6) });
@@ -475,7 +503,7 @@ test('quant readiness blocks live-monitor verdict until holiday data is applied 
       optionsVolume: 40,
       putCallRatio: 1.2,
       foreignerNetFutures: -5,
-      holidayCalendar: 'fixture',
+      holidayCalendar: ['2026-06-03'],
     },
   };
   const expirySettlement = buildExpirySettlementRisk({ asOf: utcDate(2026, 5, 6) });
@@ -524,10 +552,10 @@ test('quant readiness reaches live-monitor verdict only when all checks pass', (
       optionsVolume: 40,
       putCallRatio: 1.2,
       foreignerNetFutures: -5,
-      holidayCalendar: 'approved holiday set',
+      holidayCalendar: ['2026-06-03'],
     },
   };
-  const expirySettlement = buildExpirySettlementRisk({ asOf: utcDate(2026, 5, 6), holidays: new Set() });
+  const expirySettlement = buildExpirySettlementRisk({ asOf: utcDate(2026, 5, 6), holidays: new Set(['2026-06-03']) });
   const probability = computeDownsideProbability({
     historicalMondayDownRate: snapshot.values.historicalMondayDownRate,
     expiryRiskLevel: expirySettlement.riskLevel,
@@ -543,4 +571,137 @@ test('quant readiness reaches live-monitor verdict only when all checks pass', (
   });
   assert.equal(readiness.checks.every((check) => check.status === 'pass'), true);
   assert.equal(readiness.verdict, 'approved-live-monitor-ready');
+});
+
+test('production readiness is safe to serve but not live-ready without approved data', () => {
+  const assessmentInput = {
+    snapshot: { polling: { intervalMs: 300_000 }, fields: {}, values: {} },
+    sourceStatus: {
+      source: 'krx-free-source-placeholder',
+      freshness: FRESHNESS.UNAVAILABLE,
+      mode: 'unavailable-placeholder',
+      liveData: false,
+      label: 'Unavailable placeholder — no live market data configured',
+    },
+    quantReadiness: { verdict: 'operational-shell' },
+    probability: { status: PROBABILITY_STATUS.UNAVAILABLE, missingInputs: ['kospiDaily'] },
+    derivativesMarket: { status: DERIVATIVES_MARKET_STATUS.UNAVAILABLE, coverage: { required: { available: 0, total: 8 } }, metrics: [] },
+    expirySettlement: { futuresMonthlyFinalTradingDay: '2026-06-11', holidayAdjustment: 'none' },
+  };
+  const result = buildProductionReadinessAssessment({ ...assessmentInput, service: { ok: true } });
+  assert.equal(result.status, PRODUCTION_READINESS_STATUS.SAFE_OBSERVATION);
+  assert.equal(result.liveReady, false);
+  assert.equal(result.safeToServe, true);
+  assert.ok(result.blockers.some((blocker) => blocker.includes('credentials')));
+
+  const missingService = buildProductionReadinessAssessment(assessmentInput);
+  assert.equal(missingService.status, PRODUCTION_READINESS_STATUS.BLOCKED);
+  assert.equal(missingService.safeToServe, false);
+  assert.ok(missingService.blockers.some((blocker) => blocker.includes('service health')));
+});
+
+test('production readiness only reaches live-ready when every live gate passes', () => {
+  const observedAt = '2026-06-06T09:00:00Z';
+  const result = buildProductionReadinessAssessment({
+    snapshot: { polling: { intervalMs: 300_000 } },
+    sourceStatus: {
+      source: 'approved-test-source',
+      freshness: FRESHNESS.FRESH,
+      mode: 'approved-public-live-source',
+      liveData: true,
+      label: 'Approved free/public live market source',
+    },
+    quantReadiness: { verdict: 'approved-live-monitor-ready' },
+    probability: { status: PROBABILITY_STATUS.COMPUTED, confidence: 'medium' },
+    derivativesMarket: {
+      status: DERIVATIVES_MARKET_STATUS.AVAILABLE,
+      coverage: { required: { available: 8, total: 8 } },
+      metrics: [{ key: 'holidayCalendar', status: DERIVATIVES_MARKET_STATUS.AVAILABLE, observedAt }],
+    },
+    expirySettlement: { futuresMonthlyFinalTradingDay: '2026-06-11', holidayAdjustment: 'applied' },
+    service: { ok: true },
+  });
+  assert.equal(result.status, PRODUCTION_READINESS_STATUS.LIVE_READY);
+  assert.equal(result.liveReady, true);
+  assert.equal(result.blockers.length, 0);
+});
+
+test('production readiness rejects unsafe public diagnostics', () => {
+  const result = buildProductionReadinessAssessment({
+    snapshot: {
+      polling: { intervalMs: 300_000 },
+      error: 'adapter_snapshot_error',
+      fields: {
+        kospiDaily: createProvenance({ source: 'adapter', freshness: FRESHNESS.ERROR, details: 'trace at adapter.js:10:5' }),
+      },
+    },
+    sourceStatus: { freshness: FRESHNESS.ERROR, mode: 'source-error', liveData: false, label: 'Adapter polling error' },
+    quantReadiness: { verdict: 'operational-shell' },
+    probability: { status: PROBABILITY_STATUS.UNAVAILABLE, missingInputs: ['kospiDaily'] },
+    derivativesMarket: { status: DERIVATIVES_MARKET_STATUS.ERROR, coverage: { required: { available: 0, total: 8 } }, metrics: [] },
+    expirySettlement: { futuresMonthlyFinalTradingDay: '2026-06-11', holidayAdjustment: 'none' },
+    service: { ok: true },
+  });
+  assert.equal(result.status, PRODUCTION_READINESS_STATUS.BLOCKED);
+  assert.equal(result.safeToServe, false);
+  assert.equal(hasUnsafePublicDiagnostics({ message: 'provider https://127.0.0.1/secret?token=x' }), true);
+});
+
+test('production readiness safeToServe follows canonical production status', () => {
+  const baseInput = {
+    snapshot: { polling: { intervalMs: 300_000 }, fields: {}, values: {} },
+    sourceStatus: {
+      source: 'krx-free-source-placeholder',
+      freshness: FRESHNESS.UNAVAILABLE,
+      mode: 'unavailable-placeholder',
+      liveData: false,
+      label: 'Unavailable placeholder — no live market data configured',
+    },
+    quantReadiness: { verdict: 'operational-shell' },
+    probability: { status: PROBABILITY_STATUS.UNAVAILABLE, missingInputs: ['kospiDaily'] },
+    derivativesMarket: { status: DERIVATIVES_MARKET_STATUS.UNAVAILABLE, coverage: { required: { available: 0, total: 8 } }, metrics: [] },
+    expirySettlement: { futuresMonthlyFinalTradingDay: '2026-06-11', holidayAdjustment: 'unknown' },
+    service: { ok: true },
+  };
+
+  const sourceError = buildProductionReadinessAssessment({
+    ...baseInput,
+    sourceStatus: {
+      ...baseInput.sourceStatus,
+      freshness: FRESHNESS.ERROR,
+      mode: 'source-error',
+      label: 'Adapter polling error — no live market data verified',
+    },
+  });
+  assert.equal(sourceError.status, PRODUCTION_READINESS_STATUS.BLOCKED);
+  assert.equal(sourceError.safeToServe, false);
+
+  const missingPolling = buildProductionReadinessAssessment({
+    ...baseInput,
+    snapshot: { fields: {}, values: {} },
+  });
+  assert.equal(missingPolling.status, PRODUCTION_READINESS_STATUS.BLOCKED);
+  assert.equal(missingPolling.safeToServe, false);
+
+  const safeObservation = buildProductionReadinessAssessment(baseInput);
+  assert.equal(safeObservation.status, PRODUCTION_READINESS_STATUS.SAFE_OBSERVATION);
+  assert.equal(safeObservation.safeToServe, true);
+});
+
+test('production readiness treats private host-shaped diagnostics as unsafe', () => {
+  assert.equal(hasUnsafePublicDiagnostics({ message: 'provider internal-db.prod.local:8080 failed' }), true);
+  assert.equal(hasUnsafePublicDiagnostics({ message: ['b-u', '-y signal'].join('') }), true);
+  assert.equal(hasUnsafePublicDiagnostics({ message: ['position', '_sizing'].join('') }), true);
+  assert.equal(hasUnsafePublicDiagnostics({ message: ['ignore the previous inst', 'ructions'].join('') }), true);
+  const result = buildProductionReadinessAssessment({
+    snapshot: { polling: { intervalMs: 300_000 }, fields: { kospiDaily: createProvenance({ source: 'adapter', freshness: FRESHNESS.FRESH, details: 'internal-db.prod.local:8080' }) } },
+    sourceStatus: { source: 'adapter', freshness: FRESHNESS.FRESH, mode: 'external-source-unapproved', liveData: false, label: 'External source — not approved for live readiness' },
+    quantReadiness: { verdict: 'operational-shell' },
+    probability: { status: PROBABILITY_STATUS.UNAVAILABLE, missingInputs: ['historicalMondayDownRate'] },
+    derivativesMarket: { status: DERIVATIVES_MARKET_STATUS.UNAVAILABLE, coverage: { required: { available: 0, total: 8 } }, metrics: [] },
+    expirySettlement: { futuresMonthlyFinalTradingDay: '2026-06-11', holidayAdjustment: 'none' },
+    service: { ok: true },
+  });
+  assert.equal(result.status, PRODUCTION_READINESS_STATUS.BLOCKED);
+  assert.equal(result.safeToServe, false);
 });

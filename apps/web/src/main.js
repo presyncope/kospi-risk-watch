@@ -136,6 +136,52 @@ function renderQuantReadiness(readiness) {
   }
 }
 
+function renderProductionReadiness(readiness) {
+  const scoreText = readiness?.scorePct == null ? 'Unavailable' : `${readiness.scorePct}/100`;
+  setText('#production-readiness-score', scoreText);
+  const status = readiness?.status ?? 'production-blocked';
+  const statusNode = $('#production-readiness-status');
+  statusNode.className = `status ${statusClass(status)}`;
+  statusNode.textContent = status.replaceAll('-', ' ').toUpperCase();
+  setText('#production-readiness-summary', readiness?.summary ?? 'Production readiness is unavailable.');
+  renderDefinitionList('#production-readiness-meta', [
+    ['Live ready', readiness?.liveReady ? 'Yes' : 'No'],
+    ['Safe to serve', readiness?.safeToServe ? 'Yes' : 'No'],
+    ['Score', readiness?.score == null ? '—' : `${readiness.score}/${readiness.maxScore}`],
+    ['Caveat', readiness?.caveat],
+  ]);
+
+  const checks = $('#production-readiness-checks');
+  checks.replaceChildren();
+  for (const check of readiness?.checks ?? []) {
+    const row = document.createElement('div');
+    const label = document.createElement('strong');
+    const statusLabel = document.createElement('span');
+    const evidence = document.createElement('small');
+    row.className = `readiness-row ${statusClass(check.status)}`;
+    label.textContent = `${check.label} · ${check.score}/${check.maxScore}`;
+    statusLabel.textContent = check.status;
+    evidence.textContent = check.evidence;
+    row.append(label, statusLabel, evidence);
+    checks.append(row);
+  }
+
+  const blockers = $('#production-readiness-blockers');
+  blockers.replaceChildren();
+  const blockerList = readiness?.blockers ?? [];
+  if (blockerList.length === 0) {
+    const item = document.createElement('li');
+    item.textContent = 'No production readiness blockers at the current system/data-rights level.';
+    blockers.append(item);
+  } else {
+    for (const blocker of blockerList) {
+      const item = document.createElement('li');
+      item.textContent = blocker;
+      blockers.append(item);
+    }
+  }
+}
+
 function renderDerivativesMarket(market) {
   setText('#derivatives-market-summary', market?.summary ?? 'Derivatives coverage is unavailable.');
   const node = $('#derivatives-market-list');
@@ -184,6 +230,16 @@ function renderFetchFailure(message) {
     summary: message,
     caveat: 'This readiness score evaluates dashboard data/system completeness only; it is not market direction guidance.',
     strengths: [],
+    blockers: [message],
+    checks: [],
+  });
+  renderProductionReadiness({
+    scorePct: null,
+    status: 'production-blocked',
+    liveReady: false,
+    safeToServe: false,
+    summary: message,
+    caveat: 'Production readiness cannot be assessed while the dashboard API is unreachable.',
     blockers: [message],
     checks: [],
   });
@@ -273,6 +329,7 @@ async function loadDashboard(force = false) {
     const dashboard = await (await fetch(apiUrl(`/api/dashboard${force ? '?force=true' : ''}`))).json();
     renderProbability(dashboard.probability);
     renderQuantReadiness(dashboard.quantReadiness);
+    renderProductionReadiness(dashboard.productionReadiness);
     renderExpiry(dashboard.expirySettlement);
     renderDerivativesMarket(dashboard.derivativesMarket);
     renderFreshness(dashboard.sourceFreshnessSummary, dashboard.sourceStatus);

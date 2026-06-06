@@ -1,4 +1,5 @@
 import { normalizePollingConfig } from '../../../packages/core/src/index.js';
+import { normalizeAdapterResult } from '../../../packages/data-adapters/src/index.js';
 
 export class PollingCoordinator {
   constructor({ adapter, config = {}, clock = () => new Date() }) {
@@ -29,9 +30,10 @@ export class PollingCoordinator {
     this.inFlight = this.adapter.getSnapshot()
       .then((snapshot) => {
         const polledAt = this.clock();
+        const normalizedSnapshot = normalizeAdapterResult(snapshot);
         this.lastPollAtMs = polledAt.getTime();
         this.cache = {
-          ...snapshot,
+          ...normalizedSnapshot,
           polledAt: polledAt.toISOString(),
           polling: this.getConfig(),
         };
@@ -42,16 +44,19 @@ export class PollingCoordinator {
         const polledAt = this.clock();
         this.lastError = error;
         this.lastPollAtMs = polledAt.getTime();
-        this.cache = {
+        const normalizedErrorSnapshot = normalizeAdapterResult({
           source: this.adapter.source ?? 'unknown',
           observedAt: polledAt.toISOString(),
-          polledAt: polledAt.toISOString(),
           freshness: 'error',
           error: 'adapter_polling_failed',
           message: 'Adapter polling failed; details are hidden from the public dashboard.',
           capabilities: { sourceApproval: 'error', readinessAllowed: false },
           fields: {},
           values: {},
+        });
+        this.cache = {
+          ...normalizedErrorSnapshot,
+          polledAt: polledAt.toISOString(),
           polling: this.getConfig(),
         };
         return this.cache;

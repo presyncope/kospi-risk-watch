@@ -1,4 +1,4 @@
-import { FRESHNESS, buildDerivativesMarketContext, buildExpirySettlementRisk, buildQuantReadinessAssessment, buildRiskAlerts, computeDownsideProbability, createProvenance, evaluateLiveSourceApproval, summarizeFreshness } from '../../../packages/core/src/index.js';
+import { FRESHNESS, buildDerivativesMarketContext, buildExpirySettlementRisk, buildProductionReadinessAssessment, buildQuantReadinessAssessment, buildRiskAlerts, computeDownsideProbability, createProvenance, evaluateLiveSourceApproval, normalizeHolidaySet, summarizeFreshness } from '../../../packages/core/src/index.js';
 
 export function summarizeSnapshotFreshness(snapshot = {}) {
   const fields = { ...(snapshot.fields ?? {}) };
@@ -53,8 +53,11 @@ export function buildSourceStatus(snapshot = {}) {
   };
 }
 
-export function buildDashboardState(snapshot, { asOf = new Date() } = {}) {
-  const expirySettlement = buildExpirySettlementRisk({ asOf });
+export function buildDashboardState(snapshot, { asOf = new Date(), service = {} } = {}) {
+  const holidaySet = snapshot.fields?.holidayCalendar?.freshness === FRESHNESS.FRESH
+    ? normalizeHolidaySet(snapshot.values?.holidayCalendar)
+    : null;
+  const expirySettlement = buildExpirySettlementRisk({ asOf, holidays: holidaySet });
   const sourceFreshnessSummary = summarizeSnapshotFreshness(snapshot);
   const probability = computeDownsideProbability({
     historicalMondayDownRate: snapshot.values?.historicalMondayDownRate ?? null,
@@ -73,6 +76,15 @@ export function buildDashboardState(snapshot, { asOf = new Date() } = {}) {
     derivativesMarket,
     expirySettlement,
   });
+  const productionReadiness = buildProductionReadinessAssessment({
+    snapshot,
+    sourceStatus,
+    quantReadiness,
+    probability,
+    derivativesMarket,
+    expirySettlement,
+    service,
+  });
   return {
     snapshot,
     sourceStatus,
@@ -81,6 +93,7 @@ export function buildDashboardState(snapshot, { asOf = new Date() } = {}) {
     expirySettlement,
     derivativesMarket,
     quantReadiness,
+    productionReadiness,
     alerts,
   };
 }

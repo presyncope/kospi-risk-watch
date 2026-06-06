@@ -73,6 +73,12 @@ function installFakeDocument() {
     'quant-readiness-meta',
     'quant-readiness-checks',
     'quant-readiness-blockers',
+    'production-readiness-score',
+    'production-readiness-status',
+    'production-readiness-summary',
+    'production-readiness-meta',
+    'production-readiness-checks',
+    'production-readiness-blockers',
     'expiry-meta',
     'derivatives-market-summary',
     'derivatives-market-list',
@@ -193,6 +199,22 @@ const dashboardFixture = Object.freeze({
       { key: 'probability', label: 'Downside probability calculation', status: 'pass', score: 20, maxScore: 20, evidence: 'Probability is computed.' },
     ],
   },
+  productionReadiness: {
+    status: 'production-safe-observation',
+    verdict: 'production-safe-observation',
+    liveReady: false,
+    safeToServe: true,
+    score: 55,
+    maxScore: 100,
+    scorePct: 55,
+    summary: 'Production-safe observation shell; live readiness remains blocked until approved market data is configured.',
+    caveat: 'Production readiness is an operational/data-rights gate, not market direction guidance.',
+    blockers: ['Configure credentials, data-rights approval, endpoint mapping, and a system-owned source registry entry before live readiness.'],
+    checks: [
+      { key: 'service', label: 'Service health', status: 'pass', score: 10, maxScore: 10, evidence: 'API process is responding.' },
+      { key: 'approved-live-source', label: 'Approved live market source', status: 'fail', score: 0, maxScore: 20, evidence: 'Mock fixture is not live data.' },
+    ],
+  },
   alerts: [
     { kind: 'market-risk', severity: 'high', message: 'Monitoring threshold crossed.' },
   ],
@@ -236,6 +258,10 @@ test('UI module renders dashboard state and polling control with mocked APIs', a
     assert.match(elements.get('#quant-readiness-verdict').className, /status-analysis-review-ready/);
     assert.match(elements.get('#quant-readiness-blockers').textContent, /approved free/);
     assert.match(elements.get('#quant-readiness-checks').textContent, /Probability is computed/);
+    assert.equal(elements.get('#production-readiness-score').textContent, '55/100');
+    assert.match(elements.get('#production-readiness-status').className, /status-production-safe-observation/);
+    assert.match(elements.get('#production-readiness-blockers').textContent, /source registry/);
+    assert.match(elements.get('#production-readiness-checks').textContent, /Service health/);
     assert.match(elements.get('#expiry-meta').textContent, /2026-06-11/);
     assert.match(elements.get('#derivatives-market-summary').textContent, /2\/8 derivatives/);
     assert.match(elements.get('#derivatives-market-list').textContent, /Futures basis/);
@@ -302,6 +328,8 @@ test('UI module renders explicit dashboard fetch failure state', async () => {
   await import(moduleUrl);
 
   assert.equal(elements.get('#probability-value').textContent, 'Unavailable');
+  assert.match(elements.get('#production-readiness-status').className, /status-production-blocked/);
+  assert.match(elements.get('#production-readiness-blockers').textContent, /Dashboard API fetch failed/);
   assert.match(elements.get('#source-status').textContent, /Dashboard API unavailable/);
   assert.match(elements.get('#freshness-list').textContent, /dashboard-api/);
   assert.match(elements.get('#alerts-list').textContent, /Dashboard API fetch failed/);

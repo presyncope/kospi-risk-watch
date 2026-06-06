@@ -33,6 +33,13 @@ test('dashboard HTML exposes required MVP panels and guardrails', async () => {
     'quant-readiness-meta',
     'quant-readiness-checks',
     'quant-readiness-blockers',
+    'production-readiness',
+    'production-readiness-score',
+    'production-readiness-status',
+    'production-readiness-summary',
+    'production-readiness-meta',
+    'production-readiness-checks',
+    'production-readiness-blockers',
     'source-status',
     'expiry-meta',
     'derivatives-market',
@@ -47,6 +54,7 @@ test('dashboard HTML exposes required MVP panels and guardrails', async () => {
   assert.match(html, /automated trading/);
   assert.match(html, /KOSPI200 expiry-settlement/);
   assert.match(html, /Senior quant assessment/);
+  assert.match(html, /Production readiness/);
   assert.match(html, /Derivatives market coverage/);
 });
 

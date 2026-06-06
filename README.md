@@ -11,6 +11,7 @@ This repo implements the first-pass dashboard described in `.omx/plans/prd-kospi
 - UI-adjustable polling interval for free/public data adapters
 - source freshness and adapter error visibility
 - senior quant readiness score that grades system/data completeness, not market direction
+- production readiness panel and `/api/readiness` gate for public operational safety vs live-data blockers
 - derivatives market coverage panel for futures/options metric availability
 - informational alerts gated by data quality
 - persistent non-advice/no-auto-trading guardrails
@@ -41,8 +42,12 @@ Optional environment variables:
 | Variable | Values | Purpose |
 | --- | --- | --- |
 | `PORT` | number | Local server port; defaults to `4173`. |
-| `MARKET_DATA_ADAPTER` | `mock`, `mock-stale`, `mock-error` | Uses deterministic mock snapshots for local development and tests. |
-| `KRX_OPEN_API_KEY` | credential string | Reserved for a future approved KRX adapter; current MVP still returns an unavailable placeholder. |
+| `MARKET_DATA_ADAPTER` | `mock`, `mock-stale`, `mock-error`, `json-http` | Uses deterministic mock snapshots or the strict normalized JSON integration adapter. |
+| `MARKET_DATA_URL` | URL | Required only for `MARKET_DATA_ADAPTER=json-http`; must return the normalized snapshot contract documented in `docs/data-sources.md`. |
+| `MARKET_DATA_SOURCE` | string | Canonical source id for `json-http`; defaults to `json-http-market-data`. |
+| `MARKET_DATA_AUTH_HEADER_NAME` / `MARKET_DATA_AUTH_HEADER_VALUE` | strings | Optional environment-only header pair for `json-http`; rejected on plain `http:` URLs. |
+| `MARKET_DATA_TIMEOUT_MS` / `MARKET_DATA_MAX_BODY_BYTES` | numbers | Optional timeout/body limits for `json-http`; defaults are 5000 ms and 256 KiB. |
+| `KRX_OPEN_API_KEY` | credential string | Reserved for a future approved KRX adapter; current implementation still returns an unavailable placeholder until KRX service approvals/endpoints are configured. |
 
 Examples:
 
@@ -72,8 +77,10 @@ npm run verify
 | `GET /api/polling` | Current polling configuration. |
 | `POST /api/polling` | Normalize the caller's UI refresh interval; this public endpoint is client-scoped and does not mutate the server-wide adapter polling cadence. |
 | `GET /api/snapshot?force=true` | Adapter snapshot with freshness, field provenance, values, and polling metadata. |
-| `GET /api/dashboard?force=true` | Composed dashboard state: probability, quant readiness, derivatives market coverage, expiry-settlement risk, freshness summary, alerts. |
+| `GET /api/dashboard?force=true` | Composed dashboard state: probability, quant readiness, production readiness, derivatives market coverage, expiry-settlement risk, freshness summary, alerts. |
+| `GET /api/readiness?force=true` | Public readiness summary: top-level service/readiness flags (`serviceOk`, `status`, `ready`, `liveReady`, `safeToServe`), source status, quant readiness, production readiness, polling metadata, and non-advice notice. |
 
+All adapter outputs are normalized again at the polling boundary before they are cached or exposed through public JSON endpoints, so unsupported fields, unsafe diagnostic text, and provider internals are dropped even if a future adapter bypasses helper-level normalization.
 
 ## Senior quant readiness levels
 
@@ -85,7 +92,17 @@ The readiness card evaluates whether the dashboard itself is ready for monitorin
 | `analysis-review-ready` | Deterministic fixture or non-live review inputs are sufficient to review dashboard behavior, but this is not live market readiness. Mock mode can reach this level for verification only. |
 | `approved-live-monitor-ready` | Reserved for an explicitly approved free/public, fresh, non-mock adapter that declares live-market-data capabilities and provides KOSPI probability inputs plus every live-critical KOSPI200 derivatives field with provenance. The current default deployment does not claim this state. |
 
-The derivatives coverage panel always renders the required metric slots (basis, futures/options open interest and volume, put/call ratio, foreigner net futures flow, holiday calendar), treats all of them as live-critical for approved live-monitor readiness, and marks unavailable fields explicitly rather than hiding them.
+The derivatives coverage panel always renders the required metric slots (basis, futures/options open interest and volume, put/call ratio, foreigner net futures flow, holiday calendar), treats all of them as live-critical for approved live-monitor readiness, and marks unavailable fields explicitly rather than hiding them. Holiday-calendar values are accepted only as a fresh, non-empty bounded `YYYY-MM-DD` date array and are applied to expiry/settlement calculation before any live-ready claim can pass.
+
+## Production readiness levels
+
+The production readiness panel is an operational/data-rights gate, not market direction guidance.
+
+| Status | Meaning |
+| --- | --- |
+| `production-safe-observation` | Public service and safety guardrails are healthy, but `liveReady` is false because approved live market data or full fresh coverage is missing. This is the expected no-credential deployment state. |
+| `production-blocked` | A service/safety requirement is failing, such as unsafe public diagnostics, service failure, or adapter error state. |
+| `production-live-ready` | Reserved for registry-approved live source plus fresh probability inputs, full live-critical derivatives metrics, applied holiday-calendar date array, polling metadata, sanitized diagnostics, and guardrails. |
 
 ## Data source limits
 

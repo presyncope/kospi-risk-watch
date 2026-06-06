@@ -1,4 +1,5 @@
 import { FRESHNESS } from './freshness.js';
+import { MAX_HOLIDAY_DATES, isValidDateKey } from './expiry.js';
 
 export const DERIVATIVES_MARKET_STATUS = Object.freeze({
   AVAILABLE: 'available',
@@ -76,7 +77,10 @@ export const DERIVATIVES_MARKET_METRICS = Object.freeze([
 ]);
 
 function hasInvalidMetricValue(definition, value) {
-  return value != null && definition.valueType === 'number' && !Number.isFinite(value);
+  if (value == null) return false;
+  if (definition.valueType === 'number') return !Number.isFinite(value);
+  if (definition.valueType === 'calendar') return !Array.isArray(value) || value.length === 0 || value.length > MAX_HOLIDAY_DATES || !value.every(isValidDateKey);
+  return false;
 }
 
 function metricStatus({ definition, provenance, value }) {
@@ -91,6 +95,9 @@ function metricStatus({ definition, provenance, value }) {
 function displayMetricValue(definition, value) {
   if (value == null) return 'Unavailable';
   if (hasInvalidMetricValue(definition, value)) return 'Unavailable';
+  if (definition.valueType === 'calendar') {
+    return value.length === 1 ? '1 holiday date' : `${value.length} holiday dates`;
+  }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return 'Unavailable';
     const formatted = Number.isInteger(value) ? value.toLocaleString('en-US') : value.toFixed(2);
@@ -104,7 +111,11 @@ function unavailableReason(definition, provenance, value) {
   if (!provenance) return 'Adapter did not provide this metric.';
   if (provenance.freshness === FRESHNESS.UNAVAILABLE) return provenance.details ?? 'Source marks this metric unavailable.';
   if (value == null) return 'Metric value is missing even though provenance exists.';
-  if (hasInvalidMetricValue(definition, value)) return 'Metric value is not finite numeric.';
+  if (hasInvalidMetricValue(definition, value)) {
+    return definition.valueType === 'calendar'
+      ? 'Metric value is not a valid holiday calendar date array.'
+      : 'Metric value is not finite numeric.';
+  }
   return provenance.details ?? null;
 }
 
