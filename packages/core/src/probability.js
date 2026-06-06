@@ -10,6 +10,14 @@ function clampProbability(value) {
   return Math.round(Math.min(100, Math.max(0, value)) * 10) / 10;
 }
 
+function isValidRate(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function hasInput(value) {
+  return value !== null && value !== undefined;
+}
+
 export function computeDownsideProbability({
   historicalMondayDownRate = null,
   recentMomentum = null,
@@ -17,39 +25,57 @@ export function computeDownsideProbability({
   expiryRiskLevel = 'normal',
   provenance = {},
 } = {}) {
-  const required = ['kospiDaily'];
+  const required = ['kospiDaily', 'historicalMondayDownRate'];
   const probabilityProvenance = {
     kospiDaily: provenance.kospiDaily,
-    ...(Number.isFinite(volatilityZScore) ? { volatility: provenance.volatility } : {}),
+    historicalMondayDownRate: provenance.historicalMondayDownRate,
+    ...(hasInput(recentMomentum) ? { recentMomentum: provenance.recentMomentum } : {}),
+    ...(hasInput(volatilityZScore) ? { volatility: provenance.volatility } : {}),
   };
   const missingInputs = missingRequiredFields(probabilityProvenance, required);
   const sourceFreshnessSummary = summarizeFreshness(probabilityProvenance);
+  const invalidRequiredInputs = isValidRate(historicalMondayDownRate) ? [] : ['historicalMondayDownRate'];
 
-  if (missingInputs.length > 0 || historicalMondayDownRate == null) {
+  if (missingInputs.length > 0 || invalidRequiredInputs.length > 0) {
     return {
       status: PROBABILITY_STATUS.UNAVAILABLE,
       probability: null,
       confidence: 'none',
-      missingInputs: [...new Set([...missingInputs, historicalMondayDownRate == null ? 'historicalMondayDownRate' : null].filter(Boolean))],
+      missingInputs: [...new Set([...missingInputs, ...invalidRequiredInputs])],
       sourceFreshnessSummary,
-      formula: 'Unavailable until required KOSPI daily history is present.',
+      formula: 'Unavailable until required KOSPI daily history and valid baseline-rate inputs are present.',
       contributions: [],
     };
   }
 
   let staleOrError = sourceFreshnessSummary.fields.some((field) => field.freshness !== FRESHNESS.FRESH);
-  const requiredInputStale = provenance.kospiDaily?.freshness === FRESHNESS.STALE;
-  const degradedReasons = requiredInputStale ? ['kospiDaily is stale; headline numeric probability is suppressed'] : [];
+  const requiredInputStale = required.some((field) => provenance[field]?.freshness === FRESHNESS.STALE);
+  const degradedReasons = requiredInputStale ? ['Required probability inputs are stale; headline numeric probability is suppressed'] : [];
   let score = Number(historicalMondayDownRate) * 100;
   const contributions = [{ input: 'historicalMondayDownRate', points: score, note: 'Baseline Monday decline frequency.' }];
 
-  if (Number.isFinite(recentMomentum)) {
-    const adjustment = recentMomentum < 0 ? Math.min(12, Math.abs(recentMomentum) * 100) : -Math.min(8, recentMomentum * 100);
-    score += adjustment;
-    contributions.push({ input: 'recentMomentum', points: Math.round(adjustment * 10) / 10, note: 'Negative momentum raises downside estimate; positive momentum lowers it.' });
+  if (hasInput(recentMomentum) && !Number.isFinite(recentMomentum)) {
+    staleOrError = true;
+    degradedReasons.push('recentMomentum ignored because its value is not finite numeric');
+    contributions.push({ input: 'recentMomentum', points: 0, note: 'Ignored because recent momentum value is not finite numeric.' });
+  } else if (Number.isFinite(recentMomentum)) {
+    const momentumFreshness = provenance.recentMomentum?.freshness ?? FRESHNESS.UNAVAILABLE;
+    if (momentumFreshness !== FRESHNESS.FRESH) {
+      staleOrError = true;
+      degradedReasons.push('recentMomentum ignored because its provenance is missing or degraded');
+      contributions.push({ input: 'recentMomentum', points: 0, note: 'Ignored because recent momentum provenance is missing or degraded.' });
+    } else {
+      const adjustment = recentMomentum < 0 ? Math.min(12, Math.abs(recentMomentum) * 100) : -Math.min(8, recentMomentum * 100);
+      score += adjustment;
+      contributions.push({ input: 'recentMomentum', points: Math.round(adjustment * 10) / 10, note: 'Negative momentum raises downside estimate; positive momentum lowers it.' });
+    }
   }
 
-  if (Number.isFinite(volatilityZScore)) {
+  if (hasInput(volatilityZScore) && !Number.isFinite(volatilityZScore)) {
+    staleOrError = true;
+    degradedReasons.push('volatilityZScore ignored because its value is not finite numeric');
+    contributions.push({ input: 'volatilityZScore', points: 0, note: 'Ignored because volatility value is not finite numeric.' });
+  } else if (Number.isFinite(volatilityZScore)) {
     const volatilityFreshness = provenance.volatility?.freshness ?? FRESHNESS.UNAVAILABLE;
     if (volatilityFreshness !== FRESHNESS.FRESH) {
       staleOrError = true;

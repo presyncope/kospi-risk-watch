@@ -6,3 +6,4 @@ export { PROBABILITY_STATUS, computeDownsideProbability } from './probability.js
 export { ALERT_SEVERITY, buildRiskAlerts } from './alerts.js';
 export { DERIVATIVES_MARKET_STATUS, DERIVATIVES_MARKET_METRICS, buildDerivativesMarketContext } from './derivatives-market.js';
 export { QUANT_READINESS_VERDICTS, READINESS_CHECK_STATUS, buildQuantReadinessAssessment } from './quant-readiness.js';
+export { APPROVED_LIVE_SOURCE_REGISTRY, evaluateLiveSourceApproval } from './source-approval.js';

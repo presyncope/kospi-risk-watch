@@ -70,7 +70,7 @@ npm run verify
 | --- | --- |
 | `GET /api/health` | Local service health and non-advice notice. |
 | `GET /api/polling` | Current polling configuration. |
-| `POST /api/polling` | Update polling interval; core logic clamps interval to safe bounds. |
+| `POST /api/polling` | Normalize the caller's UI refresh interval; this public endpoint is client-scoped and does not mutate the server-wide adapter polling cadence. |
 | `GET /api/snapshot?force=true` | Adapter snapshot with freshness, field provenance, values, and polling metadata. |
 | `GET /api/dashboard?force=true` | Composed dashboard state: probability, quant readiness, derivatives market coverage, expiry-settlement risk, freshness summary, alerts. |
 
@@ -89,7 +89,7 @@ The derivatives coverage panel always renders the required metric slots (basis, 
 
 ## Data source limits
 
-The MVP is designed around free/public data polling but intentionally does not claim live KRX connectivity. Without an approved and implemented adapter, the default source is `krx-free-source-placeholder` and returns `unavailable` rather than fake live data. Fresh-looking future adapters are still rejected for live readiness unless they declare explicit `liveMarketData`, `approvedPublic`, and `readinessAllowed` capabilities.
+The MVP is designed around free/public data polling but intentionally does not claim live KRX connectivity. Without an approved and implemented adapter, the default source is `krx-free-source-placeholder` and returns `unavailable` rather than fake live data. Fresh-looking future adapters are still rejected for live readiness unless they declare explicit `liveMarketData`, `approvedPublic`, and `readinessAllowed` capabilities **and** their source/license pair is present in the system-owned live-source approval registry.
 
 KRX planning references captured during requirements/planning:
 

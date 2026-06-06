@@ -22,13 +22,14 @@ Adapters return normalized snapshots with:
 - `freshness`: `fresh`, `stale`, `unavailable`, or `error`
 - `fields`: field-level provenance entries such as `kospiDaily`, `kospi200`, `derivativesCalendar`, `volatility`, and derivatives metric fields
 - `values`: numeric inputs used by pure domain logic
-- `capabilities`: explicit adapter boundary flags (`mock`, `liveMarketData`, `approvedPublic`, `readinessAllowed`, `sourceApproval`, `license`) used for live-readiness gating
+- `capabilities`: explicit adapter boundary flags (`mock`, `liveMarketData`, `approvedPublic`, `readinessAllowed`, `sourceApproval`, `license`) used as input to the system-owned live-source approval registry
 - `message` and sanitized public `error`: visible context for operators; thrown adapter exceptions are not exposed verbatim
 
 Backend polling adds:
 
 - `polledAt`: local polling timestamp
-- `polling`: active interval/config metadata, including `forceRefreshLimited` when public force-refresh requests are served from cache to protect free API quotas
+- `polling`: active server interval/config metadata, including `forceRefreshLimited` when public force-refresh requests are served from cache to protect free API quotas
+- `POST /api/polling`: client-scoped interval normalization for the browser refresh loop; it does not mutate server-wide adapter polling on the public endpoint
 
 
 ## Required derivatives metric contract
@@ -46,11 +47,11 @@ The senior-quant coverage panel expects every future approved adapter to either 
 | `foreignerNetFutures` | Net KOSPI200 futures flow for the foreign-investor category when available | source, observedAt, freshness, optional details |
 | `holidayCalendar` | Approved trading-day calendar for expiry and settlement adjustments | source, observedAt, freshness, optional details |
 
-If a field is unavailable, the adapter should still include field provenance with `freshness: "unavailable"` and a short reason. Domain code will not synthesize a metric value from missing data. All listed fields are currently live-critical: missing or stale critical fields keep derivatives status below approved live-monitor readiness.
+If a field is unavailable, the adapter should still include field provenance with `freshness: "unavailable"` and a short reason. Domain code will not synthesize a metric value from missing data. Numeric metric values must be finite JavaScript numbers; non-finite numbers, numeric-looking strings, and other non-numeric values are treated as unavailable. All listed fields are currently live-critical: missing, stale, or invalid critical fields keep derivatives status below approved live-monitor readiness.
 
 ## Readiness scoring contract
 
-`quantReadiness` grades system/data completeness only. It combines explicit source capabilities, probability status, live-critical derivatives coverage, expiry-calendar availability, polling visibility, and observation-only guardrails. The expiry check separates transparent rule-based monthly expiry logic from holiday-adjusted live readiness: a rule-only calendar stays in `watch` until fresh holiday-calendar provenance is present. Mock fixtures can demonstrate `analysis-review-ready` rendering but must remain labelled mock/not-live; default unavailable or unapproved fresh adapters remain `operational-shell`. `approved-live-monitor-ready` requires an approved free/public live adapter plus fresh probability inputs and every live-critical derivatives metric.
+`quantReadiness` grades system/data completeness only. It combines system-owned source approval, probability status, live-critical derivatives coverage, expiry-calendar availability, polling visibility, and observation-only guardrails. The expiry check separates transparent rule-based monthly expiry logic from holiday-adjusted live readiness: a rule-only calendar stays in `watch` until fresh holiday-calendar provenance is present. Mock fixtures can demonstrate `analysis-review-ready` rendering but must remain labelled mock/not-live; default unavailable or unapproved fresh adapters remain `operational-shell`. `approved-live-monitor-ready` requires an approved free/public live adapter from the central registry plus fresh probability inputs and every live-critical derivatives metric.
 
 ## Future KRX/free-source adapter rules
 
@@ -58,9 +59,9 @@ A future authorized adapter should follow these constraints:
 
 1. Use only approved free/public credentials and documented endpoints.
 2. Keep credentials in environment variables; never commit secrets.
-3. Declare explicit capabilities: `liveMarketData: true`, `approvedPublic: true`, `readinessAllowed: true`, a documented `sourceApproval`, and a `license` string before the adapter can unlock live readiness.
+3. Declare explicit capabilities: `liveMarketData: true`, `approvedPublic: true`, `readinessAllowed: true`, a documented `sourceApproval`, and a `license` string; the source/license pair must also be registered in `APPROVED_LIVE_SOURCE_REGISTRY` before the adapter can unlock live readiness.
 4. Normalize every field with `source`, `observedAt`, `freshness`, and optional sanitized `error` details.
-5. Prefer `unavailable` or `error` over inferred live values when data cannot be fetched or parsed.
+5. Prefer `unavailable` or `error` over inferred live values when data cannot be fetched or parsed; adapter error strings exposed to public JSON should be stable codes rather than raw provider exceptions.
 6. Preserve the UI polling controls, backend interval clamps, and force-refresh rate limiting.
 7. Do not add order execution, brokerage, production-grade hardening claims, or advice-oriented output.
 8. Add adapter tests with mocked responses before enabling the adapter in local runtime paths.
@@ -71,4 +72,4 @@ The product language uses best-effort polling, not exchange-grade realtime deliv
 
 ## Probability caveat
 
-The probability card is an explainable monitoring estimate. It exposes status, confidence, missing inputs, source freshness, and contribution notes. It must not hide degraded data quality behind a precise-looking number: stale required KOSPI daily input suppresses the headline numeric probability until fresh again. `historicalMondayDownRate` and `recentMomentum` are treated as values derived from the `kospiDaily` provenance boundary; optional volatility requires separate `volatility` provenance.
+The probability card is an explainable monitoring estimate. It exposes status, confidence, missing inputs, source freshness, and contribution notes. It must not hide degraded data quality behind a precise-looking number: stale required KOSPI daily or baseline-rate inputs suppress the headline numeric probability until fresh again. `historicalMondayDownRate` and `recentMomentum` require explicit field provenance; optional volatility requires separate `volatility` provenance. Optional adjustment values with missing or degraded provenance are ignored and reported as degraded rather than silently used.

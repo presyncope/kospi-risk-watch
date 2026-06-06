@@ -1,4 +1,4 @@
-import { FRESHNESS, buildDerivativesMarketContext, buildExpirySettlementRisk, buildQuantReadinessAssessment, buildRiskAlerts, computeDownsideProbability, createProvenance, summarizeFreshness } from '../../../packages/core/src/index.js';
+import { FRESHNESS, buildDerivativesMarketContext, buildExpirySettlementRisk, buildQuantReadinessAssessment, buildRiskAlerts, computeDownsideProbability, createProvenance, evaluateLiveSourceApproval, summarizeFreshness } from '../../../packages/core/src/index.js';
 
 export function summarizeSnapshotFreshness(snapshot = {}) {
   const fields = { ...(snapshot.fields ?? {}) };
@@ -16,17 +16,9 @@ export function buildSourceStatus(snapshot = {}) {
   const source = snapshot.source ?? 'unknown';
   const capabilities = snapshot.capabilities ?? {};
   const isMock = capabilities.mock === true;
-  const approval = capabilities.sourceApproval ?? 'unapproved';
-  const blockedApprovals = new Set(['unapproved', 'placeholder', 'unconfigured', 'mock-fixture', 'error']);
-  const explicitApproval = typeof approval === 'string' && approval.trim() !== '' && !blockedApprovals.has(approval);
-  const documentedLicense = typeof capabilities.license === 'string' && capabilities.license.trim() !== '' && capabilities.license !== 'unspecified';
-  const isApprovedLive = !isMock
-    && explicitApproval
-    && documentedLicense
-    && capabilities.liveMarketData === true
-    && capabilities.approvedPublic === true
-    && capabilities.readinessAllowed === true
-    && snapshot.freshness === FRESHNESS.FRESH;
+  const sourceApproval = evaluateLiveSourceApproval({ source, capabilities });
+  const approval = sourceApproval.approval;
+  const isApprovedLive = sourceApproval.approved && snapshot.freshness === FRESHNESS.FRESH;
   const hasSourceError = snapshot.freshness === FRESHNESS.ERROR || Boolean(snapshot.error);
   const isPlaceholder = approval === 'placeholder' || approval === 'unconfigured' || source === 'unconfigured';
   let mode = 'external-source-unapproved';
@@ -54,6 +46,8 @@ export function buildSourceStatus(snapshot = {}) {
     mode,
     liveData: isApprovedLive,
     approval,
+    requestedApproval: sourceApproval.requestedApproval ?? approval,
+    approvalReason: sourceApproval.reason,
     license: capabilities.license ?? 'unspecified',
     label,
   };

@@ -7,18 +7,30 @@ export const ADAPTER_STATUSES = Object.freeze({
   ERROR: FRESHNESS.ERROR,
 });
 
+function sanitizePublicAdapterError(error, fallback) {
+  if (!error) return null;
+  if (typeof error === 'string' && /^adapter_[a-z0-9_]{1,48}$/.test(error)) return error;
+  return fallback;
+}
+
 export function normalizeAdapterResult({ source, fields = {}, values = {}, observedAt = new Date().toISOString(), freshness = FRESHNESS.FRESH, error = null, message = null, capabilities = {} } = {}) {
+  const publicSnapshotError = sanitizePublicAdapterError(error, 'adapter_snapshot_error');
   const normalizedFields = Object.fromEntries(
-    Object.entries(fields).map(([name, provenance]) => [
-      name,
-      createProvenance({ source: provenance.source ?? source, observedAt: provenance.observedAt ?? observedAt, freshness: provenance.freshness ?? freshness, error: provenance.error ?? error, details: provenance.details ?? null }),
-    ]),
+    Object.entries(fields).map(([name, provenance]) => {
+      const publicFieldError = provenance.error
+        ? sanitizePublicAdapterError(provenance.error, 'adapter_field_error')
+        : publicSnapshotError;
+      return [
+        name,
+        createProvenance({ source: provenance.source ?? source, observedAt: provenance.observedAt ?? observedAt, freshness: provenance.freshness ?? freshness, error: publicFieldError, details: provenance.details ?? null }),
+      ];
+    }),
   );
   return {
     source: source ?? 'unknown',
     observedAt,
     freshness,
-    error,
+    error: publicSnapshotError,
     message,
     capabilities: {
       mock: capabilities.mock === true,
@@ -47,6 +59,8 @@ export function createUnavailableAdapter(source = 'unconfigured') {
         capabilities: { sourceApproval: 'unconfigured' },
         fields: {
           kospiDaily: { source, observedAt, freshness: FRESHNESS.UNAVAILABLE },
+          historicalMondayDownRate: { source, observedAt, freshness: FRESHNESS.UNAVAILABLE },
+          recentMomentum: { source, observedAt, freshness: FRESHNESS.UNAVAILABLE },
           kospi200: { source, observedAt, freshness: FRESHNESS.UNAVAILABLE },
           derivativesCalendar: { source: 'krx-calendar-rules', observedAt, freshness: FRESHNESS.FRESH },
           futuresBasis: { source, observedAt, freshness: FRESHNESS.UNAVAILABLE, details: 'No approved derivatives market source is configured.' },
@@ -79,6 +93,8 @@ export function createMockMarketDataAdapter({ source = 'mock-market-data', stale
           capabilities: { mock: true, sourceApproval: 'mock-fixture' },
           fields: {
             kospiDaily: { source, observedAt, freshness: FRESHNESS.ERROR, error: 'mock adapter forced failure' },
+            historicalMondayDownRate: { source, observedAt, freshness: FRESHNESS.ERROR, error: 'mock adapter forced failure' },
+            recentMomentum: { source, observedAt, freshness: FRESHNESS.ERROR, error: 'mock adapter forced failure' },
           },
         });
       }
@@ -91,6 +107,8 @@ export function createMockMarketDataAdapter({ source = 'mock-market-data', stale
         capabilities: { mock: true, sourceApproval: 'mock-fixture' },
         fields: {
           kospiDaily: { source, observedAt, freshness },
+          historicalMondayDownRate: { source, observedAt, freshness, details: 'Derived from mock KOSPI daily history.' },
+          recentMomentum: { source, observedAt, freshness, details: 'Derived from mock KOSPI daily history.' },
           kospi200: { source, observedAt, freshness },
           derivativesCalendar: { source: 'krx-calendar-rules', observedAt, freshness: FRESHNESS.FRESH },
           volatility: { source, observedAt, freshness },
@@ -135,6 +153,8 @@ export function createKrxFreeSourcePlaceholder({ apiKey = process.env.KRX_OPEN_A
         capabilities: { sourceApproval: 'placeholder' },
         fields: {
           kospiDaily: { source: 'krx-open-api-placeholder', observedAt, freshness: FRESHNESS.UNAVAILABLE },
+          historicalMondayDownRate: { source: 'krx-open-api-placeholder', observedAt, freshness: FRESHNESS.UNAVAILABLE },
+          recentMomentum: { source: 'krx-open-api-placeholder', observedAt, freshness: FRESHNESS.UNAVAILABLE },
           futuresBasis: { source: 'krx-open-api-placeholder', observedAt, freshness: FRESHNESS.UNAVAILABLE },
           futuresOpenInterest: { source: 'krx-open-api-placeholder', observedAt, freshness: FRESHNESS.UNAVAILABLE },
           futuresVolume: { source: 'krx-open-api-placeholder', observedAt, freshness: FRESHNESS.UNAVAILABLE },

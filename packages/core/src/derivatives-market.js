@@ -13,6 +13,7 @@ export const DERIVATIVES_MARKET_METRICS = Object.freeze([
     key: 'futuresBasis',
     label: 'Futures basis',
     unit: 'pt',
+    valueType: 'number',
     description: 'Nearest KOSPI200 futures price minus spot/index reference.',
     requiredForLive: true,
   },
@@ -20,6 +21,7 @@ export const DERIVATIVES_MARKET_METRICS = Object.freeze([
     key: 'futuresOpenInterest',
     label: 'Futures open interest',
     unit: 'contracts',
+    valueType: 'number',
     description: 'Outstanding KOSPI200 futures contracts for the monitored contract set.',
     requiredForLive: true,
   },
@@ -27,6 +29,7 @@ export const DERIVATIVES_MARKET_METRICS = Object.freeze([
     key: 'futuresVolume',
     label: 'Futures volume',
     unit: 'contracts',
+    valueType: 'number',
     description: 'Current-session KOSPI200 futures trading volume for liquidity context.',
     requiredForLive: true,
   },
@@ -34,6 +37,7 @@ export const DERIVATIVES_MARKET_METRICS = Object.freeze([
     key: 'optionsOpenInterest',
     label: 'Options open interest',
     unit: 'contracts',
+    valueType: 'number',
     description: 'Outstanding KOSPI200 options contracts across the monitored expiry set.',
     requiredForLive: true,
   },
@@ -41,6 +45,7 @@ export const DERIVATIVES_MARKET_METRICS = Object.freeze([
     key: 'optionsVolume',
     label: 'Options volume',
     unit: 'contracts',
+    valueType: 'number',
     description: 'Current-session KOSPI200 options trading volume for activity context.',
     requiredForLive: true,
   },
@@ -48,6 +53,7 @@ export const DERIVATIVES_MARKET_METRICS = Object.freeze([
     key: 'putCallRatio',
     label: 'Put/call ratio',
     unit: 'ratio',
+    valueType: 'number',
     description: 'Options activity or open-interest ratio, depending on adapter provenance.',
     requiredForLive: true,
   },
@@ -55,6 +61,7 @@ export const DERIVATIVES_MARKET_METRICS = Object.freeze([
     key: 'foreignerNetFutures',
     label: 'Foreigner net futures flow',
     unit: 'contracts',
+    valueType: 'number',
     description: 'Net KOSPI200 futures flow from the foreign-investor category when an adapter provides it.',
     requiredForLive: true,
   },
@@ -62,51 +69,60 @@ export const DERIVATIVES_MARKET_METRICS = Object.freeze([
     key: 'holidayCalendar',
     label: 'Holiday calendar',
     unit: 'calendar',
+    valueType: 'calendar',
     description: 'Approved trading-day calendar used to move expiry or settlement dates around holidays.',
     requiredForLive: true,
   },
 ]);
 
-function metricStatus({ provenance, value }) {
+function hasInvalidMetricValue(definition, value) {
+  return value != null && definition.valueType === 'number' && !Number.isFinite(value);
+}
+
+function metricStatus({ definition, provenance, value }) {
   const freshness = provenance?.freshness ?? FRESHNESS.UNAVAILABLE;
   if (freshness === FRESHNESS.ERROR) return DERIVATIVES_MARKET_STATUS.ERROR;
+  if (hasInvalidMetricValue(definition, value)) return DERIVATIVES_MARKET_STATUS.UNAVAILABLE;
   if (freshness === FRESHNESS.UNAVAILABLE || value == null) return DERIVATIVES_MARKET_STATUS.UNAVAILABLE;
   if (freshness === FRESHNESS.STALE) return DERIVATIVES_MARKET_STATUS.STALE;
   return DERIVATIVES_MARKET_STATUS.AVAILABLE;
 }
 
-function displayMetricValue(value, unit) {
+function displayMetricValue(definition, value) {
   if (value == null) return 'Unavailable';
+  if (hasInvalidMetricValue(definition, value)) return 'Unavailable';
   if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 'Unavailable';
     const formatted = Number.isInteger(value) ? value.toLocaleString('en-US') : value.toFixed(2);
-    return unit && unit !== 'ratio' ? `${formatted} ${unit}` : formatted;
+    return definition.unit && definition.unit !== 'ratio' ? `${formatted} ${definition.unit}` : formatted;
   }
   return String(value);
 }
 
-function unavailableReason(provenance, value) {
+function unavailableReason(definition, provenance, value) {
   if (provenance?.error) return provenance.error;
   if (!provenance) return 'Adapter did not provide this metric.';
   if (provenance.freshness === FRESHNESS.UNAVAILABLE) return provenance.details ?? 'Source marks this metric unavailable.';
   if (value == null) return 'Metric value is missing even though provenance exists.';
+  if (hasInvalidMetricValue(definition, value)) return 'Metric value is not finite numeric.';
   return provenance.details ?? null;
 }
 
 function buildMetric(definition, snapshot = {}) {
   const provenance = snapshot.fields?.[definition.key] ?? null;
   const value = snapshot.values?.[definition.key] ?? null;
-  const status = metricStatus({ provenance, value });
+  const status = metricStatus({ definition, provenance, value });
   return {
     ...definition,
     status,
     value,
-    displayValue: displayMetricValue(value, definition.unit),
+    displayValue: displayMetricValue(definition, value),
     source: provenance?.source ?? snapshot.source ?? 'unconfigured',
     observedAt: provenance?.observedAt ?? null,
     freshness: provenance?.freshness ?? FRESHNESS.UNAVAILABLE,
     reason: status === DERIVATIVES_MARKET_STATUS.AVAILABLE || status === DERIVATIVES_MARKET_STATUS.STALE
       ? provenance?.details ?? null
-      : unavailableReason(provenance, value),
+      : unavailableReason(definition, provenance, value),
   };
 }
 

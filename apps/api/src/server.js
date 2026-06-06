@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { NON_ADVICE_NOTICE } from '../../../packages/core/src/index.js';
+import { NON_ADVICE_NOTICE, normalizePollingConfig } from '../../../packages/core/src/index.js';
 import { createAdapterFromEnv } from '../../../packages/data-adapters/src/index.js';
 import { buildDashboardState } from './dashboard.js';
 import { PollingCoordinator } from './polling.js';
@@ -80,7 +80,13 @@ export function createAppServer({ adapter = createAdapterFromEnv(), pollingConfi
         return;
       }
       if (url.pathname === '/api/polling' && req.method === 'POST') {
-        json(res, 200, polling.updateConfig(await readJsonBody(req)));
+        const clientPolling = normalizePollingConfig(await readJsonBody(req));
+        json(res, 200, {
+          ...clientPolling,
+          scope: 'client',
+          mutable: false,
+          serverIntervalMs: polling.getConfig().intervalMs,
+        });
         return;
       }
       if (url.pathname === '/api/snapshot') {

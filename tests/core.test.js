@@ -65,6 +65,8 @@ test('probability computes transparent contribution list when inputs are fresh',
     expiryRiskLevel: 'elevated',
     provenance: {
       kospiDaily: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+      historicalMondayDownRate: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+      recentMomentum: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
       volatility: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
     },
   });
@@ -77,7 +79,10 @@ test('probability computes transparent contribution list when inputs are fresh',
 test('stale probability becomes degraded and data-quality alert suppresses precise market-risk alert', () => {
   const probabilityResult = computeDownsideProbability({
     historicalMondayDownRate: 0.8,
-    provenance: { kospiDaily: createProvenance({ source: 'mock', observedAt: '2026-06-06T08:00:00Z', freshness: FRESHNESS.STALE }) },
+    provenance: {
+      kospiDaily: createProvenance({ source: 'mock', observedAt: '2026-06-06T08:00:00Z', freshness: FRESHNESS.STALE }),
+      historicalMondayDownRate: createProvenance({ source: 'mock', observedAt: '2026-06-06T08:00:00Z', freshness: FRESHNESS.STALE }),
+    },
   });
   assert.equal(probabilityResult.status, PROBABILITY_STATUS.DEGRADED);
   assert.equal(probabilityResult.probability, null);
@@ -86,6 +91,66 @@ test('stale probability becomes degraded and data-quality alert suppresses preci
   assert.equal(alerts.length, 1);
   assert.equal(alerts[0].kind, 'data-quality');
   assert.equal(alerts[0].severity, ALERT_SEVERITY.WATCH);
+});
+
+test('probability requires baseline-rate provenance before using derived values', () => {
+  const result = computeDownsideProbability({
+    historicalMondayDownRate: 0.52,
+    recentMomentum: -0.02,
+    provenance: {
+      kospiDaily: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+    },
+  });
+  assert.equal(result.status, PROBABILITY_STATUS.UNAVAILABLE);
+  assert.equal(result.probability, null);
+  assert.ok(result.missingInputs.includes('historicalMondayDownRate'));
+});
+
+test('probability rejects non-finite or out-of-range baseline rates', () => {
+  for (const invalidRate of [Number.NaN, Number.POSITIVE_INFINITY, '0.52', -0.1, 1.1]) {
+    const result = computeDownsideProbability({
+      historicalMondayDownRate: invalidRate,
+      provenance: {
+        kospiDaily: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+        historicalMondayDownRate: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+      },
+    });
+    assert.equal(result.status, PROBABILITY_STATUS.UNAVAILABLE);
+    assert.equal(result.probability, null);
+    assert.ok(result.missingInputs.includes('historicalMondayDownRate'));
+  }
+});
+
+test('probability ignores recent momentum when its provenance is missing', () => {
+  const result = computeDownsideProbability({
+    historicalMondayDownRate: 0.52,
+    recentMomentum: -0.02,
+    provenance: {
+      kospiDaily: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+      historicalMondayDownRate: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+    },
+  });
+  assert.equal(result.status, PROBABILITY_STATUS.DEGRADED);
+  assert.equal(result.probability, 52);
+  assert.ok(result.degradedReasons.some((reason) => reason.includes('recentMomentum')));
+  assert.equal(result.contributions.find((item) => item.input === 'recentMomentum').points, 0);
+});
+
+test('probability ignores non-finite optional adjustment values', () => {
+  const result = computeDownsideProbability({
+    historicalMondayDownRate: 0.52,
+    recentMomentum: Number.NaN,
+    volatilityZScore: 'elevated',
+    provenance: {
+      kospiDaily: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+      historicalMondayDownRate: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+      recentMomentum: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+      volatility: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+    },
+  });
+  assert.equal(result.status, PROBABILITY_STATUS.DEGRADED);
+  assert.equal(result.probability, 52);
+  assert.ok(result.degradedReasons.some((reason) => reason.includes('not finite numeric')));
 });
 
 
@@ -101,7 +166,10 @@ test('probability degrades and ignores optional volatility value without provena
   const result = computeDownsideProbability({
     historicalMondayDownRate: 0.52,
     volatilityZScore: 2,
-    provenance: { kospiDaily: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }) },
+    provenance: {
+      kospiDaily: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+      historicalMondayDownRate: createProvenance({ source: 'mock', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+    },
   });
   assert.equal(result.status, PROBABILITY_STATUS.DEGRADED);
   assert.ok(result.degradedReasons.some((reason) => reason.includes('volatilityZScore')));
@@ -114,13 +182,15 @@ test('probability freshness ignores unrelated derivatives provenance', () => {
     recentMomentum: -0.01,
     provenance: {
       kospiDaily: createProvenance({ source: 'approved-source', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+      historicalMondayDownRate: createProvenance({ source: 'approved-source', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
+      recentMomentum: createProvenance({ source: 'approved-source', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.FRESH }),
       futuresOpenInterest: createProvenance({ source: 'approved-source', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.UNAVAILABLE }),
       optionsVolume: createProvenance({ source: 'approved-source', observedAt: '2026-06-06T09:00:00Z', freshness: FRESHNESS.ERROR, error: 'provider outage' }),
     },
   });
   assert.equal(result.status, PROBABILITY_STATUS.COMPUTED);
   assert.equal(result.sourceFreshnessSummary.overall, FRESHNESS.FRESH);
-  assert.deepEqual(result.sourceFreshnessSummary.fields.map((field) => field.name), ['kospiDaily']);
+  assert.deepEqual(result.sourceFreshnessSummary.fields.map((field) => field.name), ['kospiDaily', 'historicalMondayDownRate', 'recentMomentum']);
 });
 
 
@@ -194,6 +264,41 @@ test('derivatives market context stays partial until every live-critical metric 
   assert.ok(context.blockers.some((blocker) => blocker.includes('Holiday calendar')));
 });
 
+test('derivatives market context rejects invalid numeric metric values', () => {
+  const observedAt = '2026-06-06T09:00:00Z';
+  const fields = {
+    futuresBasis: createProvenance({ source: 'test-source', observedAt, freshness: FRESHNESS.FRESH }),
+    futuresOpenInterest: createProvenance({ source: 'test-source', observedAt, freshness: FRESHNESS.FRESH }),
+    futuresVolume: createProvenance({ source: 'test-source', observedAt, freshness: FRESHNESS.FRESH }),
+    optionsOpenInterest: createProvenance({ source: 'test-source', observedAt, freshness: FRESHNESS.FRESH }),
+    optionsVolume: createProvenance({ source: 'test-source', observedAt, freshness: FRESHNESS.FRESH }),
+    putCallRatio: createProvenance({ source: 'test-source', observedAt, freshness: FRESHNESS.FRESH }),
+    foreignerNetFutures: createProvenance({ source: 'test-source', observedAt, freshness: FRESHNESS.FRESH }),
+    holidayCalendar: createProvenance({ source: 'test-source', observedAt, freshness: FRESHNESS.FRESH }),
+  };
+  const context = buildDerivativesMarketContext({
+    snapshot: {
+      source: 'test-source',
+      fields,
+      values: {
+        futuresBasis: Number.NaN,
+        futuresOpenInterest: '10',
+        futuresVolume: Number.POSITIVE_INFINITY,
+        optionsOpenInterest: 30,
+        optionsVolume: 40,
+        putCallRatio: 1.2,
+        foreignerNetFutures: -5,
+        holidayCalendar: 'fixture',
+      },
+    },
+    expirySettlement: { riskLevel: 'normal' },
+  });
+  assert.equal(context.status, DERIVATIVES_MARKET_STATUS.PARTIAL);
+  assert.equal(context.coverage.available, 5);
+  assert.equal(context.metrics.find((metric) => metric.key === 'futuresBasis').displayValue, 'Unavailable');
+  assert.ok(context.metrics.find((metric) => metric.key === 'futuresOpenInterest').reason.includes('not finite numeric'));
+});
+
 test('quant readiness grades unavailable dashboard as operational shell', () => {
   const probability = computeDownsideProbability({ provenance: {} });
   const derivativesMarket = buildDerivativesMarketContext({ snapshot: {}, expirySettlement: { riskLevel: 'normal' } });
@@ -218,6 +323,8 @@ test('quant readiness can reach analysis-review-ready with mock-quality inputs b
     polling: { intervalMs: 60_000 },
     fields: {
       kospiDaily: createProvenance({ source: 'mock-market-data', observedAt, freshness: FRESHNESS.FRESH }),
+      historicalMondayDownRate: createProvenance({ source: 'mock-market-data', observedAt, freshness: FRESHNESS.FRESH }),
+      recentMomentum: createProvenance({ source: 'mock-market-data', observedAt, freshness: FRESHNESS.FRESH }),
       volatility: createProvenance({ source: 'mock-market-data', observedAt, freshness: FRESHNESS.FRESH }),
       futuresBasis: createProvenance({ source: 'mock-market-data', observedAt, freshness: FRESHNESS.FRESH }),
       futuresOpenInterest: createProvenance({ source: 'mock-market-data', observedAt, freshness: FRESHNESS.FRESH }),
@@ -271,6 +378,8 @@ test('quant readiness rejects fresh unknown adapters without explicit approval c
     polling: { intervalMs: 60_000 },
     fields: {
       kospiDaily: createProvenance({ source: 'fresh-but-unapproved-source', observedAt, freshness: FRESHNESS.FRESH }),
+      historicalMondayDownRate: createProvenance({ source: 'fresh-but-unapproved-source', observedAt, freshness: FRESHNESS.FRESH }),
+      recentMomentum: createProvenance({ source: 'fresh-but-unapproved-source', observedAt, freshness: FRESHNESS.FRESH }),
       volatility: createProvenance({ source: 'fresh-but-unapproved-source', observedAt, freshness: FRESHNESS.FRESH }),
       futuresBasis: createProvenance({ source: 'fresh-but-unapproved-source', observedAt, freshness: FRESHNESS.FRESH }),
       futuresOpenInterest: createProvenance({ source: 'fresh-but-unapproved-source', observedAt, freshness: FRESHNESS.FRESH }),
@@ -283,6 +392,7 @@ test('quant readiness rejects fresh unknown adapters without explicit approval c
     },
     values: {
       historicalMondayDownRate: 0.53,
+      recentMomentum: -0.01,
       volatilityZScore: 1,
       futuresBasis: -0.4,
       futuresOpenInterest: 10,
@@ -321,6 +431,7 @@ test('quant readiness blocks live-monitor verdict until holiday data is applied 
     polling: { intervalMs: 60_000 },
     fields: {
       kospiDaily: createProvenance({ source: 'approved-live-source', observedAt, freshness: FRESHNESS.FRESH }),
+      historicalMondayDownRate: createProvenance({ source: 'approved-live-source', observedAt, freshness: FRESHNESS.FRESH }),
       volatility: createProvenance({ source: 'approved-live-source', observedAt, freshness: FRESHNESS.FRESH }),
       futuresBasis: createProvenance({ source: 'approved-live-source', observedAt, freshness: FRESHNESS.FRESH }),
       futuresOpenInterest: createProvenance({ source: 'approved-live-source', observedAt, freshness: FRESHNESS.FRESH }),
@@ -371,6 +482,7 @@ test('quant readiness reaches live-monitor verdict only when all checks pass', (
     polling: { intervalMs: 60_000 },
     fields: {
       kospiDaily: createProvenance({ source: 'approved-live-source', observedAt, freshness: FRESHNESS.FRESH }),
+      historicalMondayDownRate: createProvenance({ source: 'approved-live-source', observedAt, freshness: FRESHNESS.FRESH }),
       futuresBasis: createProvenance({ source: 'approved-live-source', observedAt, freshness: FRESHNESS.FRESH }),
       futuresOpenInterest: createProvenance({ source: 'approved-live-source', observedAt, freshness: FRESHNESS.FRESH }),
       futuresVolume: createProvenance({ source: 'approved-live-source', observedAt, freshness: FRESHNESS.FRESH }),

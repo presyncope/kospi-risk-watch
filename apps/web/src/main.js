@@ -3,6 +3,7 @@ const scriptPath = new URL(document.currentScript?.src ?? import.meta.url).pathn
 const basePath = scriptPath.endsWith('/src/main.js') ? scriptPath.slice(0, -'/src/main.js'.length) : '';
 const apiUrl = (path) => `${basePath}${path}`;
 let refreshTimer = null;
+let clientPollingIntervalMs = null;
 
 function statusClass(status) {
   return `status-${status ?? 'unknown'}`;
@@ -25,6 +26,10 @@ function scheduleNextRefresh(intervalMs) {
 function selectedPollingIntervalMs() {
   const value = Number($('#polling-interval')?.value);
   return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function effectivePollingIntervalMs(serverIntervalMs) {
+  return clientPollingIntervalMs ?? serverIntervalMs;
 }
 
 function renderDefinitionList(selector, entries) {
@@ -236,9 +241,10 @@ function renderAlerts(alerts) {
 
 async function loadPolling() {
   const polling = await (await fetch(apiUrl('/api/polling'))).json();
-  $('#polling-interval').value = String(polling.intervalMs);
-  setText('#polling-state', `Active · ${Math.round(polling.intervalMs / 1000)}s interval`);
-  scheduleNextRefresh(polling.intervalMs);
+  const interval = effectivePollingIntervalMs(polling.intervalMs);
+  $('#polling-interval').value = String(interval);
+  setText('#polling-state', `Active · ${Math.round(interval / 1000)}s interval`);
+  scheduleNextRefresh(interval);
 }
 
 async function updatePolling() {
@@ -249,8 +255,10 @@ async function updatePolling() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ intervalMs }),
     })).json();
-    $('#polling-interval').value = String(polling.intervalMs);
-    setText('#polling-state', `Active · ${Math.round(polling.intervalMs / 1000)}s interval`);
+    clientPollingIntervalMs = polling.intervalMs;
+    $('#polling-interval').value = String(clientPollingIntervalMs);
+    const scope = polling.scope === 'client' ? ' · client refresh only' : '';
+    setText('#polling-state', `Active · ${Math.round(clientPollingIntervalMs / 1000)}s interval${scope}`);
     await loadDashboard(true);
   } catch {
     const message = 'Polling update failed; dashboard remains observation-only and not live-ready.';
@@ -269,7 +277,7 @@ async function loadDashboard(force = false) {
     renderDerivativesMarket(dashboard.derivativesMarket);
     renderFreshness(dashboard.sourceFreshnessSummary, dashboard.sourceStatus);
     renderAlerts(dashboard.alerts);
-    const interval = dashboard.snapshot?.polling?.intervalMs;
+    const interval = effectivePollingIntervalMs(dashboard.snapshot?.polling?.intervalMs);
     const limited = dashboard.snapshot?.polling?.forceRefreshLimited ? ' · refresh rate-limited' : '';
     setText('#polling-state', interval ? `Active · ${Math.round(interval / 1000)}s interval${limited}` : 'Loaded');
     scheduleNextRefresh(interval);

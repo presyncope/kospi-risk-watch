@@ -24,7 +24,7 @@ test('backend returns normalized unavailable snapshot by default adapter', async
   });
 });
 
-test('backend polling interval can be updated and clamped', async () => {
+test('backend polling interval POST is client-scoped and clamped without mutating server cadence', async () => {
   await withServer(createAppServer({ adapter: createMockMarketDataAdapter() }), async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/polling`, {
       method: 'POST',
@@ -33,8 +33,10 @@ test('backend polling interval can be updated and clamped', async () => {
     });
     const body = await response.json();
     assert.equal(body.intervalMs, 30_000);
+    assert.equal(body.scope, 'client');
+    assert.equal(body.mutable, false);
     const snapshot = await (await fetch(`${baseUrl}/api/snapshot?force=true`)).json();
-    assert.equal(snapshot.polling.intervalMs, 30_000);
+    assert.equal(snapshot.polling.intervalMs, 300_000);
   });
 });
 
@@ -144,6 +146,36 @@ test('dashboard endpoint keeps readiness and derivative rows available during ad
   });
 });
 
+test('dashboard endpoint sanitizes adapter-returned public error strings', async () => {
+  const observedAt = '2026-06-06T09:00:00Z';
+  const adapter = {
+    source: 'raw-error-adapter',
+    async getSnapshot() {
+      return normalizeAdapterResult({
+        source: this.source,
+        observedAt,
+        freshness: FRESHNESS.ERROR,
+        error: 'provider failure SECRET_TOKEN=raw',
+        message: 'Adapter reported an error.',
+        fields: {
+          kospiDaily: {
+            source: this.source,
+            observedAt,
+            freshness: FRESHNESS.ERROR,
+            error: 'field failure SECRET_TOKEN=field',
+          },
+        },
+      });
+    },
+  };
+  await withServer(createAppServer({ adapter }), async (baseUrl) => {
+    const body = await (await fetch(`${baseUrl}/api/dashboard?force=true`)).json();
+    assert.equal(body.sourceStatus.error, 'adapter_snapshot_error');
+    assert.ok(body.sourceFreshnessSummary.fields.some((field) => field.name === 'kospiDaily' && field.error === 'adapter_field_error'));
+    assert.doesNotMatch(JSON.stringify(body), /SECRET_TOKEN|provider failure|field failure/);
+  });
+});
+
 
 test('dashboard endpoint refuses live readiness for fresh adapters without explicit approval capabilities', async () => {
   const observedAt = '2026-06-06T09:00:00Z';
@@ -156,6 +188,8 @@ test('dashboard endpoint refuses live readiness for fresh adapters without expli
         freshness: FRESHNESS.FRESH,
         fields: {
           kospiDaily: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
+          historicalMondayDownRate: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
+          recentMomentum: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
           volatility: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
           futuresBasis: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
           futuresOpenInterest: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
@@ -168,6 +202,7 @@ test('dashboard endpoint refuses live readiness for fresh adapters without expli
         },
         values: {
           historicalMondayDownRate: 0.53,
+          recentMomentum: -0.01,
           volatilityZScore: 1,
           futuresBasis: -0.4,
           futuresOpenInterest: 10,
@@ -200,9 +235,11 @@ test('dashboard endpoint requires documented source approval before live readine
         source: this.source,
         observedAt,
         freshness: FRESHNESS.FRESH,
-        capabilities: { liveMarketData: true, approvedPublic: true, readinessAllowed: true },
+        capabilities: { liveMarketData: true, approvedPublic: true, readinessAllowed: true, sourceApproval: 'self-certified-free-public', license: 'self-certified' },
         fields: {
           kospiDaily: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
+          historicalMondayDownRate: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
+          recentMomentum: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
           futuresBasis: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
           futuresOpenInterest: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
           futuresVolume: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
@@ -214,6 +251,7 @@ test('dashboard endpoint requires documented source approval before live readine
         },
         values: {
           historicalMondayDownRate: 0.53,
+          recentMomentum: -0.01,
           futuresBasis: -0.4,
           futuresOpenInterest: 10,
           futuresVolume: 20,
@@ -261,6 +299,6 @@ test('force refresh is rate-limited to avoid repeated public adapter polling', a
     assert.equal(calls, 1);
     assert.equal(first.polling.forceRefreshLimited, undefined);
     assert.equal(second.polling.forceRefreshLimited, true);
-    assert.equal(second.polling.intervalMs, 300_000);
+    assert.equal(second.polling.intervalMs, 30_000);
   });
 });
