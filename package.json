@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local/internal non-advisory KOSPI Monday downside and KOSPI200 expiry-settlement dashboard MVP.",
+  "description": "Public personal non-advisory KOSPI Monday downside and KOSPI200 expiry-settlement dashboard MVP.",
   "scripts": {
     "dev": "node apps/api/src/server.js",
     "start": "node apps/api/src/server.js",

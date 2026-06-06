@@ -18,8 +18,12 @@ export function computeDownsideProbability({
   provenance = {},
 } = {}) {
   const required = ['kospiDaily'];
-  const missingInputs = missingRequiredFields(provenance, required);
-  const sourceFreshnessSummary = summarizeFreshness(provenance);
+  const probabilityProvenance = {
+    kospiDaily: provenance.kospiDaily,
+    ...(Number.isFinite(volatilityZScore) ? { volatility: provenance.volatility } : {}),
+  };
+  const missingInputs = missingRequiredFields(probabilityProvenance, required);
+  const sourceFreshnessSummary = summarizeFreshness(probabilityProvenance);
 
   if (missingInputs.length > 0 || historicalMondayDownRate == null) {
     return {
@@ -34,7 +38,8 @@ export function computeDownsideProbability({
   }
 
   let staleOrError = sourceFreshnessSummary.fields.some((field) => field.freshness !== FRESHNESS.FRESH);
-  const degradedReasons = [];
+  const requiredInputStale = provenance.kospiDaily?.freshness === FRESHNESS.STALE;
+  const degradedReasons = requiredInputStale ? ['kospiDaily is stale; headline numeric probability is suppressed'] : [];
   let score = Number(historicalMondayDownRate) * 100;
   const contributions = [{ input: 'historicalMondayDownRate', points: score, note: 'Baseline Monday decline frequency.' }];
 
@@ -65,12 +70,14 @@ export function computeDownsideProbability({
 
   return {
     status: staleOrError ? PROBABILITY_STATUS.DEGRADED : PROBABILITY_STATUS.COMPUTED,
-    probability: clampProbability(score),
+    probability: requiredInputStale ? null : clampProbability(score),
     confidence: staleOrError ? 'low' : 'medium',
     missingInputs: [],
     degradedReasons,
     sourceFreshnessSummary,
-    formula: 'baseline Monday down-rate plus transparent momentum, volatility, and expiry-settlement adjustments.',
+    formula: requiredInputStale
+      ? 'Numeric estimate suppressed until required KOSPI daily input is fresh.'
+      : 'baseline Monday down-rate plus transparent momentum, volatility, and expiry-settlement adjustments.',
     contributions,
   };
 }

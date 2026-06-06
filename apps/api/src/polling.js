@@ -8,6 +8,7 @@ export class PollingCoordinator {
     this.cache = null;
     this.lastError = null;
     this.inFlight = null;
+    this.lastPollAtMs = null;
   }
 
   getConfig() {
@@ -27,23 +28,28 @@ export class PollingCoordinator {
     if (this.inFlight) return this.inFlight;
     this.inFlight = this.adapter.getSnapshot()
       .then((snapshot) => {
+        const polledAt = this.clock();
+        this.lastPollAtMs = polledAt.getTime();
         this.cache = {
           ...snapshot,
-          polledAt: this.clock().toISOString(),
+          polledAt: polledAt.toISOString(),
           polling: this.getConfig(),
         };
         this.lastError = null;
         return this.cache;
       })
       .catch((error) => {
+        const polledAt = this.clock();
         this.lastError = error;
+        this.lastPollAtMs = polledAt.getTime();
         this.cache = {
           source: this.adapter.source ?? 'unknown',
-          observedAt: this.clock().toISOString(),
-          polledAt: this.clock().toISOString(),
+          observedAt: polledAt.toISOString(),
+          polledAt: polledAt.toISOString(),
           freshness: 'error',
-          error: error.message,
-          message: 'Adapter polling failed.',
+          error: 'adapter_polling_failed',
+          message: 'Adapter polling failed; details are hidden from the public dashboard.',
+          capabilities: { sourceApproval: 'error', readinessAllowed: false },
           fields: {},
           values: {},
           polling: this.getConfig(),
@@ -56,8 +62,22 @@ export class PollingCoordinator {
     return this.inFlight;
   }
 
+  shouldPoll({ force = false } = {}) {
+    if (!this.cache) return true;
+    if (!force) return false;
+    if (this.lastPollAtMs == null) return true;
+    return this.clock().getTime() - this.lastPollAtMs >= this.config.intervalMs;
+  }
+
   async snapshot({ force = false } = {}) {
-    if (force || !this.cache) return this.pollNow();
-    return this.cache;
+    const shouldPoll = this.shouldPoll({ force });
+    if (shouldPoll) return this.pollNow();
+    return {
+      ...this.cache,
+      polling: {
+        ...this.getConfig(),
+        forceRefreshLimited: force === true,
+      },
+    };
   }
 }

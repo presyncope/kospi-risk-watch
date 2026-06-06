@@ -26,8 +26,18 @@ test('dashboard HTML exposes required MVP panels and guardrails', async () => {
     'probability-status',
     'probability-meta',
     'probability-contributions',
+    'quant-readiness',
+    'quant-readiness-score',
+    'quant-readiness-verdict',
+    'quant-readiness-summary',
+    'quant-readiness-meta',
+    'quant-readiness-checks',
+    'quant-readiness-blockers',
     'source-status',
     'expiry-meta',
+    'derivatives-market',
+    'derivatives-market-summary',
+    'derivatives-market-list',
     'freshness-list',
     'alerts-list',
   ]) {
@@ -36,6 +46,8 @@ test('dashboard HTML exposes required MVP panels and guardrails', async () => {
   assert.ok(html.includes(NON_ADVICE_NOTICE));
   assert.match(html, /automated trading/);
   assert.match(html, /KOSPI200 expiry-settlement/);
+  assert.match(html, /Senior quant assessment/);
+  assert.match(html, /Derivatives market coverage/);
 });
 
 test('dashboard HTML only contains observation controls, not execution controls', async () => {

@@ -22,8 +22,8 @@ button { cursor: pointer; background: #1d4ed8; border-color: #60a5fa; font-weigh
 .card { background: rgba(16, 29, 51, 0.92); border: 1px solid #263b5e; border-radius: 18px; padding: 20px; box-shadow: 0 24px 80px rgba(0, 0, 0, 0.18); }
 .probability-card h2 { font-size: clamp(2.3rem, 7vw, 5rem); }
 .status { display: inline-flex; padding: 7px 10px; border-radius: 999px; margin: 0 0 14px; background: #20304b; }
-.status-computed, .status-fresh { color: #c4f1be; background: rgba(34, 197, 94, 0.16); }
-.status-degraded, .status-stale { color: #fde68a; background: rgba(245, 158, 11, 0.16); }
+.status-computed, .status-fresh, .status-pass, .status-approved-live-monitor-ready, .status-available { color: #c4f1be; background: rgba(34, 197, 94, 0.16); }
+.status-degraded, .status-stale, .status-watch, .status-partial, .status-operational-shell, .status-analysis-review-ready { color: #fde68a; background: rgba(245, 158, 11, 0.16); }
 .status-unavailable, .status-error { color: #fecaca; background: rgba(239, 68, 68, 0.16); }
 .meta { display: grid; grid-template-columns: minmax(120px, 0.35fr) 1fr; gap: 8px 14px; margin: 14px 0; }
 .meta dt { color: #9fb4ce; }
@@ -42,10 +42,10 @@ button { cursor: pointer; background: #1d4ed8; border-color: #60a5fa; font-weigh
 .source-status small { color: #cbd5e1; }
 .source-mock-fixture { border-color: rgba(251, 191, 36, 0.58); background: rgba(120, 53, 15, 0.34); }
 
-.freshness-list, .alerts-list { display: grid; gap: 10px; }
-.freshness-row, .alert { display: grid; gap: 4px; padding: 12px; border: 1px solid #2c456d; border-radius: 14px; background: #0d1a2e; }
-.freshness-row span { text-transform: uppercase; font-weight: 800; }
-.freshness-row small, .muted { color: #9fb4ce; }
+.freshness-list, .alerts-list, .metric-list, .readiness-checks { display: grid; gap: 10px; }
+.freshness-row, .metric-row, .readiness-row, .alert { display: grid; gap: 4px; padding: 12px; border: 1px solid #2c456d; border-radius: 14px; background: #0d1a2e; }
+.freshness-row span, .metric-row span, .readiness-row span { text-transform: uppercase; font-weight: 800; }
+.freshness-row small, .metric-row small, .readiness-row small, .muted { color: #9fb4ce; }
 .severity-watch { border-color: #f59e0b; }
 .severity-high { border-color: #ef4444; }
 @media (max-width: 780px) { .grid { grid-template-columns: 1fr; } .meta { grid-template-columns: 1fr; } }

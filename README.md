@@ -1,6 +1,6 @@
 # KOSPI Risk Watch
 
-Local/internal MVP for monitoring KOSPI Monday downside context and KOSPI200 expiry-settlement risk. It is an observation-only dashboard: no automated trading, no order routing, no position sizing, and no investment advice.
+Public personal MVP for monitoring KOSPI Monday downside context and KOSPI200 expiry-settlement risk. It is an observation-only dashboard: no automated trading, no order routing, no position sizing, and no investment advice.
 
 ## Scope
 
@@ -10,13 +10,15 @@ This repo implements the first-pass dashboard described in `.omx/plans/prd-kospi
 - KOSPI200 expiry-settlement panel using transparent calendar helpers
 - UI-adjustable polling interval for free/public data adapters
 - source freshness and adapter error visibility
+- senior quant readiness score that grades system/data completeness, not market direction
+- derivatives market coverage panel for futures/options metric availability
 - informational alerts gated by data quality
 - persistent non-advice/no-auto-trading guardrails
 
 Non-goals for this pass:
 
 - no live trading or brokerage integration
-- no production/public deployment hardening
+- no production-grade deployment hardening beyond the current nginx/systemd publication path
 - no paid or closed data source dependency
 - no first-pass backtest/research workbench
 - no complex machine learning model
@@ -70,11 +72,24 @@ npm run verify
 | `GET /api/polling` | Current polling configuration. |
 | `POST /api/polling` | Update polling interval; core logic clamps interval to safe bounds. |
 | `GET /api/snapshot?force=true` | Adapter snapshot with freshness, field provenance, values, and polling metadata. |
-| `GET /api/dashboard?force=true` | Composed dashboard state: probability, expiry-settlement risk, freshness summary, alerts. |
+| `GET /api/dashboard?force=true` | Composed dashboard state: probability, quant readiness, derivatives market coverage, expiry-settlement risk, freshness summary, alerts. |
+
+
+## Senior quant readiness levels
+
+The readiness card evaluates whether the dashboard itself is ready for monitoring work. It does **not** score market direction and does not produce trade guidance.
+
+| Verdict | Meaning |
+| --- | --- |
+| `operational-shell` | Service, UI controls, guardrails, and calendar logic exist, but required market inputs are unavailable, stale, or mock-only. This is the expected default public state until an approved adapter is configured. |
+| `analysis-review-ready` | Deterministic fixture or non-live review inputs are sufficient to review dashboard behavior, but this is not live market readiness. Mock mode can reach this level for verification only. |
+| `approved-live-monitor-ready` | Reserved for an explicitly approved free/public, fresh, non-mock adapter that declares live-market-data capabilities and provides KOSPI probability inputs plus every live-critical KOSPI200 derivatives field with provenance. The current default deployment does not claim this state. |
+
+The derivatives coverage panel always renders the required metric slots (basis, futures/options open interest and volume, put/call ratio, foreigner net futures flow, holiday calendar), treats all of them as live-critical for approved live-monitor readiness, and marks unavailable fields explicitly rather than hiding them.
 
 ## Data source limits
 
-The MVP is designed around free/public data polling but intentionally does not claim live KRX connectivity. Without an approved and implemented adapter, the default source is `krx-free-source-placeholder` and returns `unavailable` rather than fake live data.
+The MVP is designed around free/public data polling but intentionally does not claim live KRX connectivity. Without an approved and implemented adapter, the default source is `krx-free-source-placeholder` and returns `unavailable` rather than fake live data. Fresh-looking future adapters are still rejected for live readiness unless they declare explicit `liveMarketData`, `approvedPublic`, and `readinessAllowed` capabilities.
 
 KRX planning references captured during requirements/planning:
 

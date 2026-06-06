@@ -20,14 +20,37 @@ Adapters return normalized snapshots with:
 - `source`: source identifier
 - `observedAt`: source observation timestamp
 - `freshness`: `fresh`, `stale`, `unavailable`, or `error`
-- `fields`: field-level provenance entries such as `kospiDaily`, `kospi200`, `derivativesCalendar`, and `volatility`
+- `fields`: field-level provenance entries such as `kospiDaily`, `kospi200`, `derivativesCalendar`, `volatility`, and derivatives metric fields
 - `values`: numeric inputs used by pure domain logic
-- `message` and `error`: visible context for operators
+- `capabilities`: explicit adapter boundary flags (`mock`, `liveMarketData`, `approvedPublic`, `readinessAllowed`, `sourceApproval`, `license`) used for live-readiness gating
+- `message` and sanitized public `error`: visible context for operators; thrown adapter exceptions are not exposed verbatim
 
 Backend polling adds:
 
 - `polledAt`: local polling timestamp
-- `polling`: active interval/config metadata
+- `polling`: active interval/config metadata, including `forceRefreshLimited` when public force-refresh requests are served from cache to protect free API quotas
+
+
+## Required derivatives metric contract
+
+The senior-quant coverage panel expects every future approved adapter to either provide or explicitly mark unavailable these fields:
+
+| Field | Meaning | Expected provenance |
+| --- | --- | --- |
+| `futuresBasis` | Nearest KOSPI200 futures price minus spot/index reference | source, observedAt, freshness, optional details |
+| `futuresOpenInterest` | Outstanding KOSPI200 futures contracts | source, observedAt, freshness, optional details |
+| `futuresVolume` | Current-session KOSPI200 futures trading volume | source, observedAt, freshness, optional details |
+| `optionsOpenInterest` | KOSPI200 options open interest across the monitored expiry set | source, observedAt, freshness, optional details |
+| `optionsVolume` | Current-session KOSPI200 options volume | source, observedAt, freshness, optional details |
+| `putCallRatio` | Options ratio using the adapter's documented basis | source, observedAt, freshness, optional details |
+| `foreignerNetFutures` | Net KOSPI200 futures flow for the foreign-investor category when available | source, observedAt, freshness, optional details |
+| `holidayCalendar` | Approved trading-day calendar for expiry and settlement adjustments | source, observedAt, freshness, optional details |
+
+If a field is unavailable, the adapter should still include field provenance with `freshness: "unavailable"` and a short reason. Domain code will not synthesize a metric value from missing data. All listed fields are currently live-critical: missing or stale critical fields keep derivatives status below approved live-monitor readiness.
+
+## Readiness scoring contract
+
+`quantReadiness` grades system/data completeness only. It combines explicit source capabilities, probability status, live-critical derivatives coverage, expiry-calendar availability, polling visibility, and observation-only guardrails. The expiry check separates transparent rule-based monthly expiry logic from holiday-adjusted live readiness: a rule-only calendar stays in `watch` until fresh holiday-calendar provenance is present. Mock fixtures can demonstrate `analysis-review-ready` rendering but must remain labelled mock/not-live; default unavailable or unapproved fresh adapters remain `operational-shell`. `approved-live-monitor-ready` requires an approved free/public live adapter plus fresh probability inputs and every live-critical derivatives metric.
 
 ## Future KRX/free-source adapter rules
 
@@ -35,11 +58,12 @@ A future authorized adapter should follow these constraints:
 
 1. Use only approved free/public credentials and documented endpoints.
 2. Keep credentials in environment variables; never commit secrets.
-3. Normalize every field with `source`, `observedAt`, `freshness`, and optional `error` details.
-4. Prefer `unavailable` or `error` over inferred live values when data cannot be fetched or parsed.
-5. Preserve the UI polling controls and backend interval clamps.
-6. Do not add order execution, brokerage, public production deployment, or advice-oriented output.
-7. Add adapter tests with mocked responses before enabling the adapter in local runtime paths.
+3. Declare explicit capabilities: `liveMarketData: true`, `approvedPublic: true`, `readinessAllowed: true`, a documented `sourceApproval`, and a `license` string before the adapter can unlock live readiness.
+4. Normalize every field with `source`, `observedAt`, `freshness`, and optional sanitized `error` details.
+5. Prefer `unavailable` or `error` over inferred live values when data cannot be fetched or parsed.
+6. Preserve the UI polling controls, backend interval clamps, and force-refresh rate limiting.
+7. Do not add order execution, brokerage, production-grade hardening claims, or advice-oriented output.
+8. Add adapter tests with mocked responses before enabling the adapter in local runtime paths.
 
 ## Realtime caveats
 
@@ -47,4 +71,4 @@ The product language uses best-effort polling, not exchange-grade realtime deliv
 
 ## Probability caveat
 
-The probability card is an explainable monitoring estimate. It exposes status, confidence, missing inputs, source freshness, and contribution notes. It must not hide degraded data quality behind a precise-looking number.
+The probability card is an explainable monitoring estimate. It exposes status, confidence, missing inputs, source freshness, and contribution notes. It must not hide degraded data quality behind a precise-looking number: stale required KOSPI daily input suppresses the headline numeric probability until fresh again. `historicalMondayDownRate` and `recentMomentum` are treated as values derived from the `kospiDaily` provenance boundary; optional volatility requires separate `volatility` provenance.

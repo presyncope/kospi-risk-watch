@@ -9,7 +9,7 @@
   <body>
     <main class="shell">
       <header class="hero">
-        <p class="eyebrow">Local/internal MVP</p>
+        <p class="eyebrow">Public personal MVP</p>
         <h1>KOSPI Monday downside + KOSPI200 expiry-settlement monitor</h1>
         <p id="non-advice" class="notice">Observation-only risk monitoring. This dashboard does not provide investment advice, buy/sell recommendations, position sizing, or automated trading.</p>
       </header>
@@ -38,10 +38,27 @@
           <ul id="probability-contributions" class="contributions"></ul>
         </article>
 
+        <article id="quant-readiness" class="card" aria-labelledby="quant-readiness-title">
+          <p class="card-kicker">Senior quant assessment</p>
+          <h2 id="quant-readiness-title"><span id="quant-readiness-score">—</span></h2>
+          <p id="quant-readiness-verdict" class="status">Waiting for readiness score…</p>
+          <p id="quant-readiness-summary" class="muted"></p>
+          <dl id="quant-readiness-meta" class="meta"></dl>
+          <div id="quant-readiness-checks" class="readiness-checks"></div>
+          <ul id="quant-readiness-blockers" class="contributions"></ul>
+        </article>
+
         <article class="card" aria-labelledby="expiry-title">
           <p class="card-kicker">KOSPI200 expiry-settlement</p>
           <h2 id="expiry-title">Current window</h2>
           <dl id="expiry-meta" class="meta"></dl>
+        </article>
+
+        <article id="derivatives-market" class="card" aria-labelledby="derivatives-market-title">
+          <p class="card-kicker">Derivatives market coverage</p>
+          <h2 id="derivatives-market-title">Major signal availability</h2>
+          <p id="derivatives-market-summary" class="muted"></p>
+          <div id="derivatives-market-list" class="metric-list"></div>
         </article>
 
         <article class="card" aria-labelledby="freshness-title">

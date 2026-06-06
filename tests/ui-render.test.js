@@ -67,7 +67,15 @@ function installFakeDocument() {
     'probability-status',
     'probability-meta',
     'probability-contributions',
+    'quant-readiness-score',
+    'quant-readiness-verdict',
+    'quant-readiness-summary',
+    'quant-readiness-meta',
+    'quant-readiness-checks',
+    'quant-readiness-blockers',
     'expiry-meta',
+    'derivatives-market-summary',
+    'derivatives-market-list',
     'source-status',
     'freshness-list',
     'alerts-list',
@@ -91,6 +99,35 @@ function installFakeDocument() {
 
 function jsonResponse(body) {
   return { json: async () => body };
+}
+
+function installFakeTimers() {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const scheduled = [];
+  globalThis.setTimeout = (handler, delay) => {
+    const timer = {
+      handler,
+      delay,
+      cleared: false,
+      unrefCalled: false,
+      unref() {
+        this.unrefCalled = true;
+      },
+    };
+    scheduled.push(timer);
+    return timer;
+  };
+  globalThis.clearTimeout = (timer) => {
+    if (timer) timer.cleared = true;
+  };
+  return {
+    scheduled,
+    restore() {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    },
+  };
 }
 
 const dashboardFixture = Object.freeze({
@@ -133,6 +170,29 @@ const dashboardFixture = Object.freeze({
     holidayAdjustment: 'none',
     explanation: 'Monthly KOSPI200 expiry-settlement window is near.',
   },
+  derivativesMarket: {
+    status: 'partial',
+    summary: '2/8 derivatives market metrics available; expiry calendar status is high.',
+    coverage: { total: 8, available: 2, stale: 0, unavailable: 6, error: 0, ratio: 0.25 },
+    metrics: [
+      { key: 'futuresBasis', label: 'Futures basis', status: 'available', displayValue: '-0.42 pt', source: 'mock-market-data', observedAt: '2026-06-06T09:00:00Z', reason: 'Mock fixture; not live market data.' },
+      { key: 'futuresOpenInterest', label: 'Futures open interest', status: 'unavailable', displayValue: 'Unavailable', source: 'krx-free-source-placeholder', observedAt: null, reason: 'Adapter did not provide this metric.' },
+    ],
+  },
+  quantReadiness: {
+    score: 70,
+    maxScore: 100,
+    scorePct: 70,
+    verdict: 'analysis-review-ready',
+    summary: 'Analysis review ready: system logic and fixture/partial inputs can be reviewed, but this is not live market readiness.',
+    caveat: 'This readiness score evaluates dashboard data/system completeness only; it is not market direction guidance.',
+    strengths: ['Downside probability calculation', 'Expiry and settlement calendar'],
+    blockers: ['Replace mock fixture with an approved free/public adapter before live-monitor readiness.'],
+    checks: [
+      { key: 'source', label: 'Market data source', status: 'watch', score: 10, maxScore: 20, evidence: 'Mock fixture is available for verification only.' },
+      { key: 'probability', label: 'Downside probability calculation', status: 'pass', score: 20, maxScore: 20, evidence: 'Probability is computed.' },
+    ],
+  },
   alerts: [
     { kind: 'market-risk', severity: 'high', message: 'Monitoring threshold crossed.' },
   ],
@@ -140,37 +200,58 @@ const dashboardFixture = Object.freeze({
 
 test('UI module renders dashboard state and polling control with mocked APIs', async () => {
   const elements = installFakeDocument();
+  const timers = installFakeTimers();
   const fetchCalls = [];
-  globalThis.fetch = async (url, options = {}) => {
-    fetchCalls.push({ url: String(url), options });
-    if (String(url) === '/kospi-risk-watch/api/polling' && options.method === 'POST') {
-      return jsonResponse({ intervalMs: JSON.parse(options.body).intervalMs, active: true });
-    }
-    if (String(url) === '/kospi-risk-watch/api/polling') return jsonResponse({ intervalMs: 60_000, active: true });
-    if (String(url).startsWith('/kospi-risk-watch/api/dashboard')) return jsonResponse(dashboardFixture);
-    throw new Error(`unexpected URL ${url}`);
-  };
+  let currentIntervalMs = 60_000;
+  try {
+    globalThis.fetch = async (url, options = {}) => {
+      fetchCalls.push({ url: String(url), options });
+      if (String(url) === '/kospi-risk-watch/api/polling' && options.method === 'POST') {
+        currentIntervalMs = JSON.parse(options.body).intervalMs;
+        return jsonResponse({ intervalMs: currentIntervalMs, active: true });
+      }
+      if (String(url) === '/kospi-risk-watch/api/polling') return jsonResponse({ intervalMs: currentIntervalMs, active: true });
+      if (String(url).startsWith('/kospi-risk-watch/api/dashboard')) {
+        return jsonResponse({
+          ...dashboardFixture,
+          snapshot: { polling: { intervalMs: currentIntervalMs } },
+        });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    };
 
-  const moduleUrl = `${pathToFileURL(process.cwd())}/apps/web/src/main.js?test=${Date.now()}`;
-  await import(moduleUrl);
+    const moduleUrl = `${pathToFileURL(process.cwd())}/apps/web/src/main.js?test=${Date.now()}`;
+    await import(moduleUrl);
 
-  assert.equal(elements.get('#polling-interval').value, '60000');
-  assert.match(elements.get('#polling-state').textContent, /Active · 60s interval/);
-  assert.equal(elements.get('#probability-value').textContent, '~62%');
-  assert.match(elements.get('#probability-status').className, /status-degraded/);
-  assert.match(elements.get('#probability-meta').textContent, /fixture degraded display check/);
-  assert.match(elements.get('#source-status').textContent, /Mock fixture/);
-  assert.match(elements.get('#source-status').textContent, /not live data/);
-  assert.match(elements.get('#source-status').textContent, /Deterministic mock data/);
-  assert.match(elements.get('#probability-contributions').textContent, /historicalMondayDownRate/);
-  assert.match(elements.get('#expiry-meta').textContent, /2026-06-11/);
-  assert.equal(elements.get('#freshness-list').children.length, 2);
-  assert.match(elements.get('#alerts-list').textContent, /Monitoring threshold crossed/);
+    assert.equal(elements.get('#polling-interval').value, '60000');
+    assert.match(elements.get('#polling-state').textContent, /Active · 60s interval/);
+    assert.equal(elements.get('#probability-value').textContent, '~62%');
+    assert.match(elements.get('#probability-status').className, /status-degraded/);
+    assert.match(elements.get('#probability-meta').textContent, /fixture degraded display check/);
+    assert.match(elements.get('#source-status').textContent, /Mock fixture/);
+    assert.match(elements.get('#source-status').textContent, /not live data/);
+    assert.match(elements.get('#source-status').textContent, /Deterministic mock data/);
+    assert.match(elements.get('#probability-contributions').textContent, /historicalMondayDownRate/);
+    assert.equal(elements.get('#quant-readiness-score').textContent, '70/100');
+    assert.match(elements.get('#quant-readiness-verdict').className, /status-analysis-review-ready/);
+    assert.match(elements.get('#quant-readiness-blockers').textContent, /approved free/);
+    assert.match(elements.get('#quant-readiness-checks').textContent, /Probability is computed/);
+    assert.match(elements.get('#expiry-meta').textContent, /2026-06-11/);
+    assert.match(elements.get('#derivatives-market-summary').textContent, /2\/8 derivatives/);
+    assert.match(elements.get('#derivatives-market-list').textContent, /Futures basis/);
+    assert.match(elements.get('#derivatives-market-list').textContent, /not live market data/);
+    assert.equal(elements.get('#freshness-list').children.length, 2);
+    assert.match(elements.get('#alerts-list').textContent, /Monitoring threshold crossed/);
+    assert.ok(timers.scheduled.some((timer) => timer.delay === 60_000 && timer.unrefCalled));
 
-  elements.get('#polling-interval').value = '300000';
-  await elements.get('#polling-interval').trigger('change');
-  assert.ok(fetchCalls.some((call) => call.url === '/kospi-risk-watch/api/polling' && call.options.method === 'POST'));
-  assert.ok(fetchCalls.some((call) => call.url === '/kospi-risk-watch/api/dashboard?force=true'));
+    elements.get('#polling-interval').value = '300000';
+    await elements.get('#polling-interval').trigger('change');
+    assert.ok(fetchCalls.some((call) => call.url === '/kospi-risk-watch/api/polling' && call.options.method === 'POST'));
+    assert.ok(fetchCalls.some((call) => call.url === '/kospi-risk-watch/api/dashboard?force=true'));
+    assert.ok(timers.scheduled.some((timer) => timer.delay === 300_000 && timer.unrefCalled));
+  } finally {
+    timers.restore();
+  }
 });
 
 
@@ -188,11 +269,11 @@ test('UI module renders source error in data-quality panel', async () => {
           liveData: false,
           label: 'Configured external source',
           message: 'Adapter polling failed.',
-          error: 'forced adapter exception',
+          error: 'adapter_polling_failed',
         },
         sourceFreshnessSummary: {
           overall: 'error',
-          fields: [{ name: 'adapter', freshness: 'error', source: 'throwing-test-adapter', observedAt: '2026-06-06T09:00:00Z', error: 'forced adapter exception' }],
+          fields: [{ name: 'adapter', freshness: 'error', source: 'throwing-test-adapter', observedAt: '2026-06-06T09:00:00Z', error: 'adapter_polling_failed' }],
         },
       });
     }
@@ -203,7 +284,26 @@ test('UI module renders source error in data-quality panel', async () => {
   await import(moduleUrl);
 
   assert.match(elements.get('#source-status').className, /status-error/);
-  assert.match(elements.get('#source-status').textContent, /forced adapter exception/);
+  assert.match(elements.get('#source-status').textContent, /adapter_polling_failed/);
   assert.match(elements.get('#freshness-list').textContent, /adapter/);
   assert.match(elements.get('#freshness-list').textContent, /error/);
+});
+
+
+test('UI module renders explicit dashboard fetch failure state', async () => {
+  const elements = installFakeDocument();
+  globalThis.fetch = async (url) => {
+    if (String(url) === '/kospi-risk-watch/api/polling') return jsonResponse({ intervalMs: 300_000, active: true });
+    if (String(url).startsWith('/kospi-risk-watch/api/dashboard')) throw new Error('network unavailable SECRET_TOKEN=hidden');
+    throw new Error(`unexpected URL ${url}`);
+  };
+
+  const moduleUrl = `${pathToFileURL(process.cwd())}/apps/web/src/main.js?test=fetch-failure-${Date.now()}`;
+  await import(moduleUrl);
+
+  assert.equal(elements.get('#probability-value').textContent, 'Unavailable');
+  assert.match(elements.get('#source-status').textContent, /Dashboard API unavailable/);
+  assert.match(elements.get('#freshness-list').textContent, /dashboard-api/);
+  assert.match(elements.get('#alerts-list').textContent, /Dashboard API fetch failed/);
+  assert.doesNotMatch(elements.get('#alerts-list').textContent, /SECRET_TOKEN|hidden/);
 });
