@@ -1,4 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
+const scriptPath = new URL(document.currentScript?.src ?? import.meta.url).pathname;
+const basePath = scriptPath.endsWith('/src/main.js') ? scriptPath.slice(0, -'/src/main.js'.length) : '';
+const apiUrl = (path) => `${basePath}${path}`;
 
 function statusClass(status) {
   return `status-${status ?? 'unknown'}`;
@@ -118,14 +121,14 @@ function renderAlerts(alerts) {
 }
 
 async function loadPolling() {
-  const polling = await (await fetch('/api/polling')).json();
+  const polling = await (await fetch(apiUrl('/api/polling'))).json();
   $('#polling-interval').value = String(polling.intervalMs);
   setText('#polling-state', `Active · ${Math.round(polling.intervalMs / 1000)}s interval`);
 }
 
 async function updatePolling() {
   const intervalMs = Number($('#polling-interval').value);
-  const polling = await (await fetch('/api/polling', {
+  const polling = await (await fetch(apiUrl('/api/polling'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ intervalMs }),
@@ -136,7 +139,7 @@ async function updatePolling() {
 
 async function loadDashboard(force = false) {
   setText('#polling-state', 'Refreshing…');
-  const dashboard = await (await fetch(`/api/dashboard${force ? '?force=true' : ''}`)).json();
+  const dashboard = await (await fetch(apiUrl(`/api/dashboard${force ? '?force=true' : ''}`))).json();
   renderProbability(dashboard.probability);
   renderExpiry(dashboard.expirySettlement);
   renderFreshness(dashboard.sourceFreshnessSummary, dashboard.sourceStatus);

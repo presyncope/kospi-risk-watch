@@ -63,3 +63,12 @@ test('local server serves dashboard static assets', async () => {
     assert.match(script, /loadDashboard/);
   });
 });
+
+
+test('dashboard HTML uses relative assets for reverse-proxy subpaths', async () => {
+  const html = await readFile('apps/web/index.html', 'utf8');
+  assert.match(html, /href="\.\/src\/styles\.css"/);
+  assert.match(html, /src="\.\/src\/main\.js"/);
+  assert.doesNotMatch(html, /href="\/src\/styles\.css"/);
+  assert.doesNotMatch(html, /src="\/src\/main\.js"/);
+});

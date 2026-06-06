@@ -78,6 +78,7 @@ function installFakeDocument() {
   }
 
   globalThis.document = {
+    currentScript: { src: 'https://nukim.dyndns.org/kospi-risk-watch/src/main.js' },
     querySelector(selector) {
       return bySelector.get(selector) ?? null;
     },
@@ -142,11 +143,11 @@ test('UI module renders dashboard state and polling control with mocked APIs', a
   const fetchCalls = [];
   globalThis.fetch = async (url, options = {}) => {
     fetchCalls.push({ url: String(url), options });
-    if (String(url) === '/api/polling' && options.method === 'POST') {
+    if (String(url) === '/kospi-risk-watch/api/polling' && options.method === 'POST') {
       return jsonResponse({ intervalMs: JSON.parse(options.body).intervalMs, active: true });
     }
-    if (String(url) === '/api/polling') return jsonResponse({ intervalMs: 60_000, active: true });
-    if (String(url).startsWith('/api/dashboard')) return jsonResponse(dashboardFixture);
+    if (String(url) === '/kospi-risk-watch/api/polling') return jsonResponse({ intervalMs: 60_000, active: true });
+    if (String(url).startsWith('/kospi-risk-watch/api/dashboard')) return jsonResponse(dashboardFixture);
     throw new Error(`unexpected URL ${url}`);
   };
 
@@ -168,16 +169,16 @@ test('UI module renders dashboard state and polling control with mocked APIs', a
 
   elements.get('#polling-interval').value = '300000';
   await elements.get('#polling-interval').trigger('change');
-  assert.ok(fetchCalls.some((call) => call.url === '/api/polling' && call.options.method === 'POST'));
-  assert.ok(fetchCalls.some((call) => call.url === '/api/dashboard?force=true'));
+  assert.ok(fetchCalls.some((call) => call.url === '/kospi-risk-watch/api/polling' && call.options.method === 'POST'));
+  assert.ok(fetchCalls.some((call) => call.url === '/kospi-risk-watch/api/dashboard?force=true'));
 });
 
 
 test('UI module renders source error in data-quality panel', async () => {
   const elements = installFakeDocument();
   globalThis.fetch = async (url) => {
-    if (String(url) === '/api/polling') return jsonResponse({ intervalMs: 300_000, active: true });
-    if (String(url).startsWith('/api/dashboard')) {
+    if (String(url) === '/kospi-risk-watch/api/polling') return jsonResponse({ intervalMs: 300_000, active: true });
+    if (String(url).startsWith('/kospi-risk-watch/api/dashboard')) {
       return jsonResponse({
         ...dashboardFixture,
         sourceStatus: {

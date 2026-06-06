@@ -1,0 +1,21 @@
+[Unit]
+Description=KOSPI Risk Watch local dashboard API
+After=network.target
+
+[Service]
+Type=simple
+User=nuk
+WorkingDirectory=/home/nuk/repos/noname001
+Environment=NODE_ENV=production
+Environment=PORT=4173
+# Default intentionally uses unavailable KRX placeholder; use MARKET_DATA_ADAPTER=mock only for local demos.
+ExecStart=/usr/bin/node apps/api/src/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target
