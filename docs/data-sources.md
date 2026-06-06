@@ -23,7 +23,7 @@ Adapters return normalized snapshots with:
 - `fields`: field-level provenance entries such as `kospiDaily`, `kospi200`, `derivativesCalendar`, `volatility`, and derivatives metric fields
 - `values`: numeric inputs used by pure domain logic
 - `capabilities`: explicit adapter boundary flags (`mock`, `liveMarketData`, `approvedPublic`, `readinessAllowed`, `sourceApproval`, `license`) used as input to the system-owned live-source approval registry
-- `message` and sanitized public `error`: visible context for operators; thrown adapter exceptions are not exposed verbatim
+- sanitized public `message`, `details`, and `error`: visible context for operators; thrown adapter exceptions and secret-like provider diagnostics are not exposed verbatim
 
 Backend polling adds:
 

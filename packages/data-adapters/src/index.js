@@ -13,6 +13,16 @@ function sanitizePublicAdapterError(error, fallback) {
   return fallback;
 }
 
+function sanitizePublicAdapterText(text, fallback = null) {
+  if (text == null) return null;
+  if (typeof text !== 'string') return fallback;
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > 240) return fallback;
+  if (/(secret|token|password|passwd|private[_ -]?key|api[_ -]?key|credential|bearer\s+)/i.test(trimmed)) return fallback;
+  return trimmed;
+}
+
 export function normalizeAdapterResult({ source, fields = {}, values = {}, observedAt = new Date().toISOString(), freshness = FRESHNESS.FRESH, error = null, message = null, capabilities = {} } = {}) {
   const publicSnapshotError = sanitizePublicAdapterError(error, 'adapter_snapshot_error');
   const normalizedFields = Object.fromEntries(
@@ -22,7 +32,13 @@ export function normalizeAdapterResult({ source, fields = {}, values = {}, obser
         : publicSnapshotError;
       return [
         name,
-        createProvenance({ source: provenance.source ?? source, observedAt: provenance.observedAt ?? observedAt, freshness: provenance.freshness ?? freshness, error: publicFieldError, details: provenance.details ?? null }),
+        createProvenance({
+          source: provenance.source ?? source,
+          observedAt: provenance.observedAt ?? observedAt,
+          freshness: provenance.freshness ?? freshness,
+          error: publicFieldError,
+          details: sanitizePublicAdapterText(provenance.details, 'adapter_field_detail_hidden'),
+        }),
       ];
     }),
   );
@@ -31,7 +47,7 @@ export function normalizeAdapterResult({ source, fields = {}, values = {}, obser
     observedAt,
     freshness,
     error: publicSnapshotError,
-    message,
+    message: sanitizePublicAdapterText(message, 'adapter_message_hidden'),
     capabilities: {
       mock: capabilities.mock === true,
       liveMarketData: capabilities.liveMarketData === true,

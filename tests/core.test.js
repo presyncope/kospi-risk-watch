@@ -12,6 +12,7 @@ import {
   classifyFreshness,
   computeDownsideProbability,
   createProvenance,
+  evaluateLiveSourceApproval,
   normalizePollingConfig,
   secondThursday,
   summarizeFreshness,
@@ -296,7 +297,29 @@ test('derivatives market context rejects invalid numeric metric values', () => {
   assert.equal(context.status, DERIVATIVES_MARKET_STATUS.PARTIAL);
   assert.equal(context.coverage.available, 5);
   assert.equal(context.metrics.find((metric) => metric.key === 'futuresBasis').displayValue, 'Unavailable');
+  assert.equal(context.metrics.find((metric) => metric.key === 'futuresBasis').value, null);
+  assert.equal(context.metrics.find((metric) => metric.key === 'futuresVolume').value, null);
   assert.ok(context.metrics.find((metric) => metric.key === 'futuresOpenInterest').reason.includes('not finite numeric'));
+});
+
+test('source approval registry blocks self-certified live adapter capabilities', () => {
+  assert.deepEqual(evaluateLiveSourceApproval({
+    source: 'mock-market-data',
+    capabilities: { mock: true, liveMarketData: true, approvedPublic: true, readinessAllowed: true, sourceApproval: 'self-certified', license: 'self-certified' },
+  }), {
+    approved: false,
+    approval: 'mock-fixture',
+    reason: 'Mock fixtures are never approved for live-monitor readiness.',
+  });
+
+  const unregistered = evaluateLiveSourceApproval({
+    source: 'fresh-live-flags-but-undocumented-source',
+    capabilities: { liveMarketData: true, approvedPublic: true, readinessAllowed: true, sourceApproval: 'self-certified-free-public', license: 'self-certified' },
+  });
+  assert.equal(unregistered.approved, false);
+  assert.equal(unregistered.approval, 'unapproved');
+  assert.equal(unregistered.requestedApproval, 'self-certified-free-public');
+  assert.match(unregistered.reason, /system-owned/);
 });
 
 test('quant readiness grades unavailable dashboard as operational shell', () => {

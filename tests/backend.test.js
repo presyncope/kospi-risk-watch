@@ -156,13 +156,14 @@ test('dashboard endpoint sanitizes adapter-returned public error strings', async
         observedAt,
         freshness: FRESHNESS.ERROR,
         error: 'provider failure SECRET_TOKEN=raw',
-        message: 'Adapter reported an error.',
+        message: 'Adapter reported SECRET_TOKEN=message.',
         fields: {
           kospiDaily: {
             source: this.source,
             observedAt,
             freshness: FRESHNESS.ERROR,
             error: 'field failure SECRET_TOKEN=field',
+            details: 'Provider detail leaked TOKEN=detail',
           },
         },
       });
@@ -171,8 +172,9 @@ test('dashboard endpoint sanitizes adapter-returned public error strings', async
   await withServer(createAppServer({ adapter }), async (baseUrl) => {
     const body = await (await fetch(`${baseUrl}/api/dashboard?force=true`)).json();
     assert.equal(body.sourceStatus.error, 'adapter_snapshot_error');
+    assert.equal(body.sourceStatus.message, 'adapter_message_hidden');
     assert.ok(body.sourceFreshnessSummary.fields.some((field) => field.name === 'kospiDaily' && field.error === 'adapter_field_error'));
-    assert.doesNotMatch(JSON.stringify(body), /SECRET_TOKEN|provider failure|field failure/);
+    assert.doesNotMatch(JSON.stringify(body), /SECRET_TOKEN|TOKEN=|provider failure|field failure|Provider detail/);
   });
 });
 

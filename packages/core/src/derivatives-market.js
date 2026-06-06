@@ -112,11 +112,14 @@ function buildMetric(definition, snapshot = {}) {
   const provenance = snapshot.fields?.[definition.key] ?? null;
   const value = snapshot.values?.[definition.key] ?? null;
   const status = metricStatus({ definition, provenance, value });
+  const publicValue = status === DERIVATIVES_MARKET_STATUS.AVAILABLE || status === DERIVATIVES_MARKET_STATUS.STALE
+    ? value
+    : null;
   return {
     ...definition,
     status,
-    value,
-    displayValue: displayMetricValue(definition, value),
+    value: publicValue,
+    displayValue: displayMetricValue(definition, publicValue),
     source: provenance?.source ?? snapshot.source ?? 'unconfigured',
     observedAt: provenance?.observedAt ?? null,
     freshness: provenance?.freshness ?? FRESHNESS.UNAVAILABLE,
