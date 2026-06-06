@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KOSPI Monday Risk Dashboard</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <p class="eyebrow">Local/internal MVP</p>
+        <h1>KOSPI Monday downside + KOSPI200 expiry-settlement monitor</h1>
+        <p id="non-advice" class="notice">Observation-only risk monitoring. This dashboard does not provide investment advice, buy/sell recommendations, position sizing, or automated trading.</p>
+      </header>
+
+      <section class="toolbar" aria-label="Polling controls">
+        <div>
+          <label for="polling-interval">Polling interval</label>
+          <select id="polling-interval">
+            <option value="30000">30 seconds</option>
+            <option value="60000">1 minute</option>
+            <option value="300000" selected>5 minutes</option>
+            <option value="900000">15 minutes</option>
+            <option value="1800000">30 minutes</option>
+          </select>
+        </div>
+        <button id="refresh" type="button">Refresh now</button>
+        <span id="polling-state" class="pill">Loading polling state…</span>
+      </section>
+
+      <section class="grid" aria-label="Dashboard panels">
+        <article class="card probability-card" aria-labelledby="probability-title">
+          <p class="card-kicker">Monday downside probability</p>
+          <h2 id="probability-title"><span id="probability-value">—</span></h2>
+          <p id="probability-status" class="status">Waiting for data…</p>
+          <dl id="probability-meta" class="meta"></dl>
+          <ul id="probability-contributions" class="contributions"></ul>
+        </article>
+
+        <article class="card" aria-labelledby="expiry-title">
+          <p class="card-kicker">KOSPI200 expiry-settlement</p>
+          <h2 id="expiry-title">Current window</h2>
+          <dl id="expiry-meta" class="meta"></dl>
+        </article>
+
+        <article class="card" aria-labelledby="freshness-title">
+          <p class="card-kicker">Data quality</p>
+          <h2 id="freshness-title">Source freshness</h2>
+          <div id="source-status" class="source-status"></div>
+          <div id="freshness-list" class="freshness-list"></div>
+        </article>
+
+        <article class="card alerts-card" aria-labelledby="alerts-title">
+          <p class="card-kicker">Informational alerts</p>
+          <h2 id="alerts-title">Risk context</h2>
+          <div id="alerts-list" class="alerts-list"></div>
+        </article>
+      </section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
