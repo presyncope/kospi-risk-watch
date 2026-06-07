@@ -236,14 +236,48 @@ select:focus-visible, button:focus-visible { outline: 3px solid rgba(125, 211, 2
 .freshness-row small, .metric-row small, .readiness-row small, .muted { color: var(--muted); line-height: 1.55; }
 .severity-watch { border-color: #f59e0b; }
 .severity-high { border-color: #ef4444; }
+/* Action card (인버스 판단 보조) */
+.action-card { grid-column: span 2; border: 1px solid rgba(125, 211, 252, 0.4); }
+.action-card h2 { font-size: clamp(1.5rem, 3.5vw, 2.4rem); }
+.gauge.status-signal-strong { --gauge-color: #ef4444; }
+.gauge.status-signal-elevated { --gauge-color: #fb923c; }
+.gauge.status-signal-watch { --gauge-color: #f59e0b; }
+.gauge.status-signal-low { --gauge-color: #22c55e; }
+.status-signal-strong { color: #fecaca; background: rgba(239, 68, 68, 0.18); }
+.status-signal-elevated { color: #fed7aa; background: rgba(251, 146, 60, 0.18); }
+.status-signal-watch { color: #fde68a; background: rgba(245, 158, 11, 0.16); }
+.status-signal-low { color: #c4f1be; background: rgba(34, 197, 94, 0.16); }
+.proximity { display: grid; gap: 6px; margin-top: 8px; }
+.proximity-track { height: 8px; border-radius: 999px; background: rgba(51, 65, 85, 0.66); overflow: hidden; }
+.proximity-track span { display: block; height: 100%; width: var(--p, 0%); border-radius: 999px; background: linear-gradient(90deg, #38bdf8, #f59e0b); }
+.action-guides { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 18px 0 4px; }
+.action-guide { display: grid; gap: 6px; padding: 14px; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; background: rgba(15, 23, 42, 0.58); }
+.action-guide strong { color: #dbeafe; }
+.disclaimer { margin-top: 14px; font-size: 0.85rem; opacity: 0.85; }
+
+/* Collapsed 시스템·데이터 상태 */
+.system-status-card { grid-column: span 2; padding: 0; }
+.system-status-card details { padding: 16px 20px; }
+.system-status-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; cursor: pointer; list-style: none; }
+.system-status-summary::-webkit-details-marker { display: none; }
+.system-status-summary::before { content: "▸"; color: var(--cyan); font-weight: 900; }
+.system-status-card details[open] .system-status-summary::before { content: "▾"; }
+.system-status-hint { margin-left: auto; font-size: 0.85rem; }
+.system-status-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.readiness-mini { background: rgba(13, 26, 46, 0.72); box-shadow: none; }
+
 @media (max-width: 900px) {
   .grid,
   .metric-list,
   .freshness-list,
   .movement-grid,
-  .downside-input-grid { grid-template-columns: 1fr; }
+  .downside-input-grid,
+  .action-guides,
+  .system-status-body { grid-template-columns: 1fr; }
   .probability-card,
-  .market-pulse-card { grid-column: auto; }
+  .market-pulse-card,
+  .action-card,
+  .system-status-card { grid-column: auto; }
   .market-pulse-head { grid-template-columns: 1fr; }
   .pulse-meta { justify-items: start; }
 }

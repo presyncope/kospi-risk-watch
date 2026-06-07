@@ -1,9 +1,9 @@
 export const NON_ADVICE_NOTICE =
-  'Observation-only risk monitoring. This dashboard does not provide investment advice, buy/sell recommendations, position sizing, or automated trading.';
+  'Personal decision-support tool for KOSPI inverse positioning. It does not execute automated trading or route orders; the entry/exit/sizing guidance shown is an illustrative reference, and the final decision and responsibility rest with the user.';
 
 export const MVP_GUARDRAILS = Object.freeze({
   automatedTrading: false,
-  investmentAdvice: false,
+  orderRouting: false,
   paidOrClosedData: false,
   productionDeployment: false,
   complexMachineLearning: false,

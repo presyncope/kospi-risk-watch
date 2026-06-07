@@ -60,6 +60,7 @@ const ALLOWED_FRESHNESS = new Set(Object.values(FRESHNESS));
 const ADAPTER_VALUE_SCHEMA = Object.freeze({
   historicalMondayDownRate: { type: 'number', min: 0, max: 1 },
   recentMomentum: { type: 'number' },
+  lastDailyChangePct: { type: 'number' },
   volatilityZScore: { type: 'number' },
   futuresBasis: { type: 'number' },
   futuresOpenInterest: { type: 'number' },
@@ -322,6 +323,7 @@ export function createMockMarketDataAdapter({ source = 'mock-market-data', stale
         values: {
           historicalMondayDownRate: 0.53,
           recentMomentum: -0.018,
+          lastDailyChangePct: -0.92,
           volatilityZScore: 1.1,
           futuresBasis: -0.42,
           futuresOpenInterest: 192345,
@@ -828,6 +830,8 @@ export function createYahooFinanceMarketDataAdapter({
           values.volatilityZScore = volZ;
           markField(fields, 'volatility', { source, observedAt, details: 'Computed from Yahoo Finance KOSPI daily proxy return volatility.' });
         }
+        const dailyChange = pctChange(kospiSeries.at(-1)?.close, kospiSeries.at(-2)?.close);
+        if (Number.isFinite(dailyChange)) values.lastDailyChangePct = roundMetric(dailyChange, 4);
       }
 
       const instruments = [];
@@ -976,6 +980,8 @@ export function createKrxOpenApiMarketDataAdapter({
           values.volatilityZScore = volZ;
           markField(fields, 'volatility', { source, observedAt, details: 'Computed from recent KOSPI return volatility in the configured KRX daily endpoint.' });
         }
+        const dailyChange = pctChange(kospiSeries.at(-1)?.close, kospiSeries.at(-2)?.close);
+        if (Number.isFinite(dailyChange)) values.lastDailyChangePct = roundMetric(dailyChange, 4);
       }
 
       const kospi200Series = buildDailySeries(extractRows(payloads.kospi200Daily));

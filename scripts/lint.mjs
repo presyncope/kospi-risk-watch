@@ -2,8 +2,9 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const roots = ['apps', 'packages', 'scripts', 'tests'];
-const forbiddenAdvice = [/\bbuy\b/i, /\bsell\b/i, /매수/, /매도/, /position\s*siz(e|ing)?/i, /포지션\s*사이즈/];
-const allowedFiles = new Set(['packages/core/src/policy.js', 'packages/core/src/public-diagnostics.js', 'apps/web/index.html', 'scripts/lint.mjs']);
+// Trade-support wording is intentionally allowed: this is a personal decision-support tool.
+// We still rely on packages/core/src/public-diagnostics.js to sanitize *external adapter* text
+// (prompt-injection / leaked secrets) at the data boundary — that protection is unchanged.
 
 async function* walk(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -26,14 +27,6 @@ for (const root of roots) {
           failures += 1;
         }
       });
-      if (!allowedFiles.has(file)) {
-        for (const pattern of forbiddenAdvice) {
-          if (pattern.test(text)) {
-            console.error(`Potential advice wording in ${file}: ${pattern}`);
-            failures += 1;
-          }
-        }
-      }
     }
   } catch {
     // root may not exist yet

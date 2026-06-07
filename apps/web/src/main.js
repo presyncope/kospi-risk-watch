@@ -28,6 +28,19 @@ const STATUS_LABELS = new Map([
   ['production-safe-observation', '공개 관찰 안전'],
   ['production-live-ready', '라이브 게시 준비 완료'],
   ['production-blocked', '게시 차단'],
+  ['medium', '보통'],
+  ['signal-strong', '진입 우위'],
+  ['signal-elevated', '분할 진입 검토'],
+  ['signal-watch', '관망'],
+  ['signal-low', '청산·축소'],
+]);
+
+const SIGNAL_INPUT_LABELS = new Map([
+  ['downsideProbability', '월요일 하락 확률'],
+  ['intradayMomentum', '당일 지수 변동'],
+  ['lastDailyChange', '최근 일봉 변동'],
+  ['volatilityZScore', '변동성 z'],
+  ['expirySettlement', '만기·결제'],
 ]);
 
 const FIELD_LABELS = new Map([
@@ -181,7 +194,8 @@ function setGauge(selector, pct, status, label) {
   if (!node) return;
   const value = clampPct(pct);
   node.style.setProperty('--value', String(value));
-  node.className = `gauge ${selector.includes('probability') ? '' : 'gauge-small'} ${statusClass(status)}`.trim();
+  const small = node.className.includes('gauge-small');
+  node.className = `gauge ${small ? 'gauge-small' : ''} ${statusClass(status)}`.replace(/\s+/g, ' ').trim();
   node.setAttribute('aria-label', `${label}: ${value}/100 · ${labelStatus(status)}`);
 }
 
@@ -226,6 +240,66 @@ function renderProbabilityValue(probability) {
   return `${probability.probability}%`;
 }
 
+function labelSignalInput(input) {
+  return SIGNAL_INPUT_LABELS.get(input) ?? input;
+}
+
+function renderProximity(pct, stance) {
+  const node = $('#action-proximity');
+  if (!node) return;
+  node.replaceChildren();
+  const value = clampPct(pct);
+  const label = document.createElement('small');
+  label.textContent = stance === '진입 우위' ? '최고 단계 도달' : `다음 단계까지 근접도 ${value}%`;
+  const track = document.createElement('div');
+  track.className = 'proximity-track';
+  const fill = document.createElement('span');
+  fill.style.setProperty('--p', `${value}%`);
+  track.append(fill);
+  node.append(label, track);
+}
+
+function renderInverseSignal(signal = {}) {
+  const status = signal.stanceStatus ?? 'unavailable';
+  setText('#action-strength', signal.signalStrength == null ? '—' : String(signal.signalStrength));
+  setGauge('#action-gauge', signal.signalStrength ?? 0, status, '인버스 신호 강도');
+  const stanceNode = $('#action-stance');
+  if (stanceNode) {
+    stanceNode.className = `status ${statusClass(status)}`;
+    stanceNode.textContent = `${signal.stance ?? '평가 불가'} · 신뢰도 ${labelStatus(signal.confidence ?? 'none')}`;
+  }
+  setText('#action-caveat', translateText(signal.caveat ?? ''));
+  renderProximity(signal.thresholdProximity, signal.stance);
+  setText('#action-entry', translateText(signal.entryGuide ?? ''));
+  setText('#action-exit', translateText(signal.exitGuide ?? ''));
+  const size = signal.positionSizingHint;
+  setText('#action-size', size ? `${size.suggestedPctOfRiskBudget}% — ${size.note} ${size.caveat}` : '사용 불가');
+  const list = $('#action-contributions');
+  if (!list) {
+    setText('#action-disclaimer', translateText(signal.disclaimer ?? ''));
+    return;
+  }
+  list.replaceChildren();
+  for (const contribution of signal.contributions ?? []) {
+    const item = document.createElement('li');
+    const sign = contribution.points > 0 ? '+' : '';
+    item.textContent = `${labelSignalInput(contribution.input)}: ${sign}${contribution.points}점 — ${translateText(contribution.note)}`;
+    list.append(item);
+  }
+  if ((signal.contributions ?? []).length === 0) {
+    const item = document.createElement('li');
+    item.textContent = '필수 입력이 들어오기 전까지 신호 근거를 표시하지 않습니다.';
+    list.append(item);
+  }
+  setText('#action-disclaimer', translateText(signal.disclaimer ?? ''));
+}
+
+function renderSystemStatusLine(quant = {}, production = {}) {
+  const safe = production?.safeToServe ? '공개 안전' : '점검 필요';
+  const quantScore = quant?.scorePct == null ? '—' : `${quant.scorePct}`;
+  setText('#system-status-line', `${labelStatus(production?.status ?? 'unknown')} · 퀀트 ${quantScore} · ${safe}`);
+}
+
 function renderProbability(probability = {}) {
   const value = renderProbabilityValue(probability);
   setText('#probability-value', value);
@@ -233,7 +307,7 @@ function renderProbability(probability = {}) {
   setGauge('#probability-gauge', probability.probability, status, '월요일 하락 확률');
   const statusNode = $('#probability-status');
   statusNode.className = `status ${statusClass(status)}`;
-  statusNode.textContent = `${labelStatus(status)} · 신뢰도 ${labelStatus(probability.confidence ?? 'none')}`;
+  statusNode.textContent = `${labelStatus(status)} · 데이터 신선도 ${labelStatus(probability.confidence ?? 'none')}`;
   renderDefinitionList('#probability-meta', [
     ['계산식', probability.formula],
     ['누락 입력', probability.missingInputs?.length ? probability.missingInputs.map(labelField).join(', ') : '없음'],
@@ -496,6 +570,21 @@ function renderSourceStatus(sourceStatus) {
 
 function renderFetchFailure(message) {
   const safeMessage = translateText(message);
+  renderInverseSignal({
+    status: 'unavailable',
+    signalStrength: null,
+    stance: '평가 불가',
+    stanceStatus: 'unavailable',
+    thresholdProximity: 0,
+    confidence: 'none',
+    contributions: [],
+    entryGuide: safeMessage,
+    exitGuide: '데이터 연결 후 다시 확인하세요.',
+    positionSizingHint: { suggestedPctOfRiskBudget: 0, note: '데이터 사용 불가', caveat: '예시일 뿐 본인 책임입니다.' },
+    caveat: safeMessage,
+    disclaimer: '자동매매가 아니며 표시된 수치는 참고 예시입니다. 최종 판단과 책임은 본인에게 있습니다.',
+  });
+  renderSystemStatusLine({ scorePct: null }, { status: 'production-blocked', safeToServe: false });
   renderProbability({
     status: 'unavailable',
     probability: null,
@@ -591,6 +680,9 @@ function translateAlertKind(kind) {
     ['market-risk', '시장 리스크'],
     ['data-quality', '데이터 품질'],
     ['expiry-settlement', '만기·결제'],
+    ['inverse-entry', '인버스 진입'],
+    ['market-drop', '당일 급락'],
+    ['volatility', '변동성'],
   ]).get(kind) ?? translateText(kind);
 }
 
@@ -626,11 +718,13 @@ async function loadDashboard(force = false) {
   setText('#polling-state', '새로고침 중…');
   try {
     const dashboard = await (await fetch(apiUrl(`/api/dashboard${force ? '?force=true' : ''}`))).json();
+    renderInverseSignal(dashboard.inverseSignal);
     renderProbability(dashboard.probability);
     renderMarketPulse(dashboard.marketPulse);
     renderDownsideInputs(dashboard.downsideInputs);
     renderQuantReadiness(dashboard.quantReadiness);
     renderProductionReadiness(dashboard.productionReadiness);
+    renderSystemStatusLine(dashboard.quantReadiness, dashboard.productionReadiness);
     renderExpiry(dashboard.expirySettlement);
     renderDerivativesMarket(dashboard.derivativesMarket);
     renderFreshness(dashboard.sourceFreshnessSummary, dashboard.sourceStatus);

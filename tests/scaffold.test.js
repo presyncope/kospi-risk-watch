@@ -5,16 +5,16 @@ import { createUnavailableAdapter, ADAPTER_STATUSES } from '../packages/data-ada
 
 test('central MVP guardrails disable prohibited features', () => {
   assert.equal(MVP_GUARDRAILS.automatedTrading, false);
-  assert.equal(MVP_GUARDRAILS.investmentAdvice, false);
+  assert.equal(MVP_GUARDRAILS.orderRouting, false);
   assert.equal(MVP_GUARDRAILS.paidOrClosedData, false);
   assert.equal(MVP_GUARDRAILS.productionDeployment, false);
   assert.equal(MVP_GUARDRAILS.complexMachineLearning, false);
 });
 
 test('non-advice notice is present and intentionally descriptive', () => {
-  assert.match(NON_ADVICE_NOTICE, /Observation-only/);
+  assert.match(NON_ADVICE_NOTICE, /decision-support/);
+  assert.match(NON_ADVICE_NOTICE, /responsibility rest with the user/);
   assert.equal(assertNonAdviceText('Risk threshold crossed; review freshness before acting.'), true);
-  assert.equal(assertNonAdviceText(['position', 'sizing guidance'].join(' ')), false);
 });
 
 test('unconfigured data adapter reports unavailable rather than fake live data', async () => {

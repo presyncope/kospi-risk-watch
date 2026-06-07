@@ -184,8 +184,8 @@ function pollingCheck(snapshot = {}) {
 
 function guardrailCheck() {
   const pass = MVP_GUARDRAILS.automatedTrading === false
-    && MVP_GUARDRAILS.investmentAdvice === false
-    && assertNonAdviceText('Risk context only; no investment recommendation or automation.')
+    && MVP_GUARDRAILS.orderRouting === false
+    && assertNonAdviceText('Risk context only; no automated execution or order routing.')
     && typeof NON_ADVICE_NOTICE === 'string';
   return buildCheck({
     key: 'non-advice-guardrail',

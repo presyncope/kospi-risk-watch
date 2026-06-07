@@ -81,6 +81,17 @@ function installFakeDocument() {
     'polling-interval',
     'refresh',
     'polling-state',
+    'action-gauge',
+    'action-strength',
+    'action-stance',
+    'action-caveat',
+    'action-proximity',
+    'action-entry',
+    'action-exit',
+    'action-size',
+    'action-contributions',
+    'action-disclaimer',
+    'system-status-line',
     'market-pulse-summary',
     'market-pulse-caveat',
     'market-pulse-meta',
@@ -293,8 +304,27 @@ const dashboardFixture = Object.freeze({
       { key: 'approved-live-source', label: 'Approved live market source', status: 'fail', score: 0, maxScore: 20, evidence: 'Mock fixture is not live data.' },
     ],
   },
+  inverseSignal: {
+    status: 'computed',
+    signalStrength: 64,
+    stance: '분할 진입 검토',
+    stanceStatus: 'signal-elevated',
+    thresholdProximity: 70,
+    confidence: 'medium',
+    intradayChangePct: -0.35,
+    lastDailyChangePct: -0.92,
+    contributions: [
+      { input: 'downsideProbability', points: 31.2, note: '월요일 하락 확률 기반 기준값입니다.' },
+      { input: 'volatilityZScore', points: 5.5, note: '변동성 확대는 급변 위험을 키워 인버스 신호를 높입니다.' },
+    ],
+    entryGuide: '인버스 분할 진입을 고려할 구간입니다.',
+    exitGuide: '청산 신호 예시: 신호 강도 30 미만으로 하락.',
+    positionSizingHint: { suggestedPctOfRiskBudget: 24, note: '변동성 역가중 예시입니다.', caveat: '예시일 뿐 본인 책임입니다.' },
+    caveat: '관찰 데이터 기준 참고 신호입니다.',
+    disclaimer: '자동매매가 아니며 표시된 수치는 참고 예시입니다. 최종 판단과 책임은 본인에게 있습니다.',
+  },
   alerts: [
-    { kind: 'market-risk', severity: 'high', message: 'Monitoring threshold crossed.' },
+    { kind: 'inverse-entry', severity: 'watch', message: '인버스 분할 진입 검토 구간 (신호 강도 64).' },
   ],
 });
 
@@ -359,8 +389,18 @@ test('UI module renders dashboard state and polling control with mocked APIs', a
     assert.match(elements.get('#derivatives-market-summary').textContent, /파생상품 지표/);
     assert.match(elements.get('#derivatives-market-list').textContent, /선물 베이시스/);
     assert.match(elements.get('#derivatives-market-list').textContent, /라이브 시장 데이터가 아닙니다/);
+    assert.equal(elements.get('#action-strength').textContent, '64');
+    assert.equal(elements.get('#action-gauge').style.getPropertyValue('--value'), '64');
+    assert.match(elements.get('#action-stance').className, /status-signal-elevated/);
+    assert.match(elements.get('#action-stance').textContent, /분할 진입 검토/);
+    assert.match(elements.get('#action-entry').textContent, /분할 진입/);
+    assert.match(elements.get('#action-size').textContent, /24%/);
+    assert.match(elements.get('#action-contributions').textContent, /월요일 하락 확률/);
+    assert.match(elements.get('#action-proximity').textContent, /근접도 70%/);
+    assert.match(elements.get('#system-status-line').textContent, /공개 관찰 안전/);
     assert.equal(elements.get('#freshness-list').children.length, 2);
-    assert.match(elements.get('#alerts-list').textContent, /모니터링 임계값/);
+    assert.match(elements.get('#alerts-list').textContent, /인버스 진입/);
+    assert.match(elements.get('#alerts-list').textContent, /분할 진입 검토 구간/);
     assert.ok(timers.scheduled.some((timer) => timer.delay === 60_000 && timer.unrefCalled));
 
     elements.get('#polling-interval').value = '300000';

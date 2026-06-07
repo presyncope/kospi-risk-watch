@@ -9,13 +9,13 @@
   <body>
     <main class="shell">
       <header class="hero">
-        <p class="eyebrow">공개 관찰용 MVP</p>
-        <h1>코스피 월요일 하락 확률 · KOSPI200 만기/결제 리스크 관찰</h1>
-        <p id="non-advice" class="notice">관찰 전용 리스크 모니터입니다. 이 대시보드는 투자 조언, 거래 유도, 투자 행동 안내, 자동매매를 제공하지 않습니다.</p>
-        <div class="hero-summary" aria-label="핵심 안전 상태">
-          <span class="hero-badge">관찰 전용</span>
-          <span class="hero-badge hero-badge-warn">라이브 준비는 별도 검증</span>
-          <span class="hero-badge">승인 데이터만 liveReady 허용</span>
+        <p class="eyebrow">개인 매매 의사결정 보조</p>
+        <h1>코스피 인버스 진입·청산 판단 보조 · 월요일 하락 확률 모니터</h1>
+        <p id="non-advice" class="notice">개인 참고용 의사결정 보조 화면입니다. 자동매매를 실행하지 않으며, 표시되는 진입·청산·비중은 투자 조언이 아니라 참고 예시입니다. 최종 판단과 책임은 본인에게 있습니다.</p>
+        <div class="hero-summary" aria-label="핵심 안내">
+          <span class="hero-badge">개인 참고용</span>
+          <span class="hero-badge hero-badge-warn">자동매매·주문 실행 없음</span>
+          <span class="hero-badge">데이터 신선도 확인 필수</span>
         </div>
       </header>
 
@@ -35,6 +35,30 @@
       </section>
 
       <section class="grid" aria-label="대시보드 패널">
+        <article id="action-card" class="card action-card primary-card" aria-labelledby="action-title">
+          <p class="card-kicker">지금 어떻게? · 인버스 판단 보조</p>
+          <div class="score-panel">
+            <div id="action-gauge" class="gauge" style="--value: 0" role="img" aria-label="인버스 신호 강도 대기 중">
+              <span id="action-strength">—</span>
+              <small>신호 강도</small>
+            </div>
+            <div class="score-copy">
+              <h2 id="action-title">인버스 포지션 신호</h2>
+              <p id="action-stance" class="status">신호 대기 중…</p>
+              <p id="action-caveat" class="muted"></p>
+              <div id="action-proximity" class="proximity" aria-label="다음 단계 근접도"></div>
+            </div>
+          </div>
+          <div class="action-guides">
+            <div class="action-guide"><strong>진입 가이드</strong><span id="action-entry" class="muted"></span></div>
+            <div class="action-guide"><strong>청산·손절 가이드</strong><span id="action-exit" class="muted"></span></div>
+            <div class="action-guide"><strong>예시 비중 (위험 예산 대비)</strong><span id="action-size" class="muted"></span></div>
+          </div>
+          <h3 class="section-subtitle">신호 기여 근거</h3>
+          <ul id="action-contributions" class="contributions"></ul>
+          <p id="action-disclaimer" class="muted disclaimer"></p>
+        </article>
+
         <article class="card market-pulse-card primary-card" aria-labelledby="market-pulse-title">
           <p class="card-kicker">시장 1분봉 관찰</p>
           <div class="market-pulse-head">
@@ -67,40 +91,51 @@
           <ul id="probability-contributions" class="contributions"></ul>
         </article>
 
-        <article id="quant-readiness" class="card primary-card" aria-labelledby="quant-readiness-title">
-          <p class="card-kicker">시니어 퀀트 평가</p>
-          <div class="score-panel score-panel-small">
-            <div id="quant-readiness-gauge" class="gauge gauge-small" style="--value: 0" role="img" aria-label="퀀트 준비도 대기 중">
-              <span id="quant-readiness-score">—</span>
-              <small>준비도</small>
-            </div>
-            <div class="score-copy">
-              <h2 id="quant-readiness-title">퀀트 준비도</h2>
-              <p id="quant-readiness-verdict" class="status">준비도 점수 대기 중…</p>
-              <p id="quant-readiness-summary" class="muted"></p>
-            </div>
-          </div>
-          <dl id="quant-readiness-meta" class="meta"></dl>
-          <div id="quant-readiness-checks" class="readiness-checks"></div>
-          <ul id="quant-readiness-blockers" class="contributions"></ul>
-        </article>
+        <article class="card system-status-card" aria-label="시스템 및 데이터 상태">
+          <details id="system-status">
+            <summary class="system-status-summary">
+              <span class="card-kicker">시스템·데이터 상태</span>
+              <span id="system-status-line" class="pill">상태 확인 중…</span>
+              <span class="system-status-hint muted">자세히 보기</span>
+            </summary>
+            <div class="system-status-body">
+              <article id="quant-readiness" class="card readiness-mini" aria-labelledby="quant-readiness-title">
+                <p class="card-kicker">시니어 퀀트 평가</p>
+                <div class="score-panel score-panel-small">
+                  <div id="quant-readiness-gauge" class="gauge gauge-small" style="--value: 0" role="img" aria-label="퀀트 준비도 대기 중">
+                    <span id="quant-readiness-score">—</span>
+                    <small>준비도</small>
+                  </div>
+                  <div class="score-copy">
+                    <h2 id="quant-readiness-title">퀀트 준비도</h2>
+                    <p id="quant-readiness-verdict" class="status">준비도 점수 대기 중…</p>
+                    <p id="quant-readiness-summary" class="muted"></p>
+                  </div>
+                </div>
+                <dl id="quant-readiness-meta" class="meta"></dl>
+                <div id="quant-readiness-checks" class="readiness-checks"></div>
+                <ul id="quant-readiness-blockers" class="contributions"></ul>
+              </article>
 
-        <article id="production-readiness" class="card primary-card" aria-labelledby="production-readiness-title">
-          <p class="card-kicker">운영 게시 준비도</p>
-          <div class="score-panel score-panel-small">
-            <div id="production-readiness-gauge" class="gauge gauge-small" style="--value: 0" role="img" aria-label="운영 게시 준비도 대기 중">
-              <span id="production-readiness-score">—</span>
-              <small>게시</small>
+              <article id="production-readiness" class="card readiness-mini" aria-labelledby="production-readiness-title">
+                <p class="card-kicker">운영 게시 준비도</p>
+                <div class="score-panel score-panel-small">
+                  <div id="production-readiness-gauge" class="gauge gauge-small" style="--value: 0" role="img" aria-label="운영 게시 준비도 대기 중">
+                    <span id="production-readiness-score">—</span>
+                    <small>게시</small>
+                  </div>
+                  <div class="score-copy">
+                    <h2 id="production-readiness-title">공개 게시 안전성</h2>
+                    <p id="production-readiness-status" class="status">운영 점검 대기 중…</p>
+                    <p id="production-readiness-summary" class="muted"></p>
+                  </div>
+                </div>
+                <dl id="production-readiness-meta" class="meta"></dl>
+                <div id="production-readiness-checks" class="readiness-checks"></div>
+                <ul id="production-readiness-blockers" class="contributions"></ul>
+              </article>
             </div>
-            <div class="score-copy">
-              <h2 id="production-readiness-title">공개 게시 안전성</h2>
-              <p id="production-readiness-status" class="status">운영 점검 대기 중…</p>
-              <p id="production-readiness-summary" class="muted"></p>
-            </div>
-          </div>
-          <dl id="production-readiness-meta" class="meta"></dl>
-          <div id="production-readiness-checks" class="readiness-checks"></div>
-          <ul id="production-readiness-blockers" class="contributions"></ul>
+          </details>
         </article>
 
         <article class="card" aria-labelledby="expiry-title">

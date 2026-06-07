@@ -186,14 +186,14 @@ function pollingCheck(snapshot = {}) {
 }
 
 function guardrailCheck() {
-  const pass = MVP_GUARDRAILS.automatedTrading === false && MVP_GUARDRAILS.investmentAdvice === false;
+  const pass = MVP_GUARDRAILS.automatedTrading === false && MVP_GUARDRAILS.orderRouting === false;
   return buildCheck({
     key: 'guardrails',
     label: 'Observation-only guardrails',
     status: pass ? READINESS_CHECK_STATUS.PASS : READINESS_CHECK_STATUS.FAIL,
     maxScore: 15,
-    evidence: pass ? 'No trading automation or advice mode is enabled.' : 'Guardrail constants are not in the safe MVP state.',
-    blocker: pass ? null : 'Disable prohibited execution or advice features.',
+    evidence: pass ? 'No trading automation or order routing is enabled.' : 'Guardrail constants are not in the safe MVP state.',
+    blocker: pass ? null : 'Disable prohibited execution or order-routing features.',
   });
 }
 
