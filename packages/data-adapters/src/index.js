@@ -78,11 +78,12 @@ const MARKET_PULSE_INSTRUMENT_KEYS = new Set(['kospi', 'kospi200', 'usdKrw']);
 function normalizeMarketPulseInstrument(value) {
   if (!isRecord(value) || !MARKET_PULSE_INSTRUMENT_KEYS.has(value.key)) return null;
   const bars = Array.isArray(value.bars)
-    ? value.bars.slice(-120).flatMap((bar) => {
+    ? value.bars.slice(-400).flatMap((bar) => {
       if (!isRecord(bar)) return [];
       const time = safeObservedAt(bar.time, null);
       const close = typeof bar.close === 'number' && Number.isFinite(bar.close) ? bar.close : null;
-      return time && close != null ? [{ time, close }] : [];
+      const volume = typeof bar.volume === 'number' && Number.isFinite(bar.volume) && bar.volume >= 0 ? bar.volume : null;
+      return time && close != null ? [{ time, close, volume }] : [];
     })
     : [];
   const normalized = {
@@ -682,13 +683,16 @@ async function fetchYahooChart({ symbol, range, interval, fetchImpl, timeoutMs, 
 
 function yahooCloseSeries(result) {
   const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
-  const closes = result?.indicators?.quote?.[0]?.close;
+  const quote = result?.indicators?.quote?.[0] ?? {};
+  const closes = quote.close;
   if (!Array.isArray(closes)) return [];
+  const volumes = Array.isArray(quote.volume) ? quote.volume : [];
   return timestamps
     .map((timestamp, index) => {
       const close = closes[index];
       if (!Number.isFinite(timestamp) || !Number.isFinite(close)) return null;
-      return { time: new Date(timestamp * 1000).toISOString(), close };
+      const volume = Number.isFinite(volumes[index]) ? volumes[index] : null;
+      return { time: new Date(timestamp * 1000).toISOString(), close, volume };
     })
     .filter(Boolean);
 }
@@ -726,7 +730,7 @@ function roundMetric(value, digits = 4) {
 
 function yahooInstrumentFromResult({ key, label, symbol, role, result }) {
   const allBars = yahooCloseSeries(result);
-  const bars = allBars.slice(-90);
+  const bars = allBars.slice(-400);
   const last = bars.at(-1)?.close ?? result?.meta?.regularMarketPrice ?? null;
   const previousClose = result?.meta?.chartPreviousClose ?? result?.meta?.previousClose ?? null;
   return {

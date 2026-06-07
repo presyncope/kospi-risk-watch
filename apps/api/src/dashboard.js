@@ -100,6 +100,15 @@ function buildMarketPulseContext(snapshot = {}, { asOf = null } = {}) {
   const observedKey = dateKey(pulse.observedAt);
   const closed = Boolean(observedKey && dateKey(asOf) && observedKey !== dateKey(asOf));
   const dataQuality = marketDataQuality(pulse);
+  const instruments = pulse.instruments ?? [];
+  // Futures-first: chart the actual traded instrument when a futures series exists; else spot proxy.
+  const hasFutures = instruments.some((item) => item.key === 'kospi200Futures');
+  const primaryKey = hasFutures ? 'kospi200Futures' : (pulse.primaryKey ?? null);
+  const primaryInstrument = instruments.find((item) => item.key === primaryKey) ?? instruments[0];
+  const futuresBasis = Number.isFinite(snapshot.values?.futuresBasis) ? snapshot.values.futuresBasis : null;
+  const impliedFuturesLevel = futuresBasis != null && Number.isFinite(primaryInstrument?.last)
+    ? Number((primaryInstrument.last + futuresBasis).toFixed(2))
+    : null;
   const caveatParts = ['Yahoo/yfinance 경로는 KOSPI200 선물이 아니라 지수 프록시입니다. liveReady 판단에는 사용하지 않습니다.'];
   if (closed) caveatParts.push(`표시값은 ${observedKey} 최근 장 마감 기준이며, 개장 후 갱신이 필요합니다.`);
   if (dataQuality === 'check') caveatParts.push('지수 레벨 비율이 비정상이라 데이터 점검이 필요합니다.');
@@ -108,11 +117,14 @@ function buildMarketPulseContext(snapshot = {}, { asOf = null } = {}) {
     source: pulse.source ?? snapshot.source ?? 'unknown',
     label: pulse.label ?? '시장 1분봉 프록시',
     observedAt: pulse.observedAt ?? null,
-    primaryKey: pulse.primaryKey ?? null,
-    instruments: pulse.instruments ?? [],
+    primaryKey,
+    isFuturesPrimary: hasFutures,
+    instruments,
     closed,
     marketDateLabel: closed ? observedKey : null,
     dataQuality,
+    futuresBasis,
+    impliedFuturesLevel,
     caveat: caveatParts.join(' '),
   };
 }
