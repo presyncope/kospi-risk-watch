@@ -23,6 +23,8 @@ export function computeDownsideProbability({
   recentMomentum = null,
   volatilityZScore = null,
   expiryRiskLevel = 'normal',
+  vixLevel = null,
+  usEquityChangePct = null,
   provenance = {},
 } = {}) {
   const required = ['kospiDaily', 'historicalMondayDownRate'];
@@ -45,6 +47,7 @@ export function computeDownsideProbability({
       sourceFreshnessSummary,
       formula: 'Unavailable until required KOSPI daily history and valid baseline-rate inputs are present.',
       contributions: [],
+      unvalidated: false,
     };
   }
 
@@ -94,6 +97,23 @@ export function computeDownsideProbability({
     contributions.push({ input: 'expirySettlementRisk', points: expiryAdjustment, note: 'Near-term expiry-settlement window raises risk marker.' });
   }
 
+  // Macro adjustments (uncalibrated): VIX risk regime and the prior US session as a Monday-gap proxy.
+  let unvalidated = false;
+  if (Number.isFinite(vixLevel) && provenance.vix?.freshness === FRESHNESS.FRESH) {
+    const adjustment = Math.min(12, Math.max(0, vixLevel - 15) * 0.5);
+    if (adjustment > 0) {
+      score += adjustment;
+      unvalidated = true;
+      contributions.push({ input: 'vixLevel', points: Math.round(adjustment * 10) / 10, note: '미검증: VIX 상승은 위험 regime을 시사해 하방 추정을 높입니다.' });
+    }
+  }
+  if (Number.isFinite(usEquityChangePct) && provenance.usEquity?.freshness === FRESHNESS.FRESH) {
+    const adjustment = usEquityChangePct < 0 ? Math.min(10, Math.abs(usEquityChangePct) * 2) : -Math.min(6, usEquityChangePct * 1.5);
+    score += adjustment;
+    unvalidated = true;
+    contributions.push({ input: 'usEquityChangePct', points: Math.round(adjustment * 10) / 10, note: '미검증: 직전 미국장 변동을 월요일 갭 위험에 반영합니다.' });
+  }
+
   return {
     status: staleOrError ? PROBABILITY_STATUS.DEGRADED : PROBABILITY_STATUS.COMPUTED,
     probability: requiredInputStale ? null : clampProbability(score),
@@ -103,7 +123,8 @@ export function computeDownsideProbability({
     sourceFreshnessSummary,
     formula: requiredInputStale
       ? 'Numeric estimate suppressed until required KOSPI daily input is fresh.'
-      : 'baseline Monday down-rate plus transparent momentum, volatility, and expiry-settlement adjustments.',
+      : 'baseline Monday down-rate plus transparent momentum, volatility, expiry, and uncalibrated macro adjustments.',
     contributions,
+    unvalidated,
   };
 }

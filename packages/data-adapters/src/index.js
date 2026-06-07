@@ -1,4 +1,7 @@
 import { FRESHNESS, createProvenance, sanitizePublicDiagnosticText } from '../../core/src/index.js';
+import { createCompositeMarketDataAdapter, createEcosMacroProvider, createFredMacroProvider } from './macro.js';
+
+export { createCompositeMarketDataAdapter, createEcosMacroProvider, createFredMacroProvider } from './macro.js';
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const PUBLIC_ADAPTER_ERROR_CODES = new Set([
@@ -52,6 +55,12 @@ const SNAPSHOT_FIELD_NAMES = Object.freeze([
   'putCallRatio',
   'foreignerNetFutures',
   'holidayCalendar',
+  'vix',
+  'usEquity',
+  'us10y',
+  'bokBaseRate',
+  'usdKrw',
+  'ktb3y',
 ]);
 
 const SNAPSHOT_FIELD_NAME_SET = new Set(SNAPSHOT_FIELD_NAMES);
@@ -62,6 +71,12 @@ const ADAPTER_VALUE_SCHEMA = Object.freeze({
   recentMomentum: { type: 'number' },
   lastDailyChangePct: { type: 'number' },
   volatilityZScore: { type: 'number' },
+  vixLevel: { type: 'number' },
+  usEquityChangePct: { type: 'number' },
+  us10yYield: { type: 'number' },
+  bokBaseRate: { type: 'number' },
+  usdKrwRate: { type: 'number' },
+  ktb3yYield: { type: 'number' },
   futuresBasis: { type: 'number' },
   futuresOpenInterest: { type: 'number' },
   futuresVolume: { type: 'number' },
@@ -1119,12 +1134,39 @@ export function createJsonHttpMarketDataAdapter({
   };
 }
 
+function macroProvidersFromEnv(env) {
+  const timeoutMs = parsePositiveNumber(env.MACRO_TIMEOUT_MS, 5_000);
+  const providers = [];
+  const fred = createFredMacroProvider({
+    apiKey: env.FRED_API_KEY,
+    series: { vix: env.FRED_VIX_SERIES, usEquity: env.FRED_US_EQUITY_SERIES, us10y: env.FRED_US10Y_SERIES },
+    timeoutMs,
+  });
+  if (fred) providers.push(fred);
+  const ecos = createEcosMacroProvider({
+    apiKey: env.ECOS_API_KEY,
+    stats: {
+      bokBaseRate: parseJsonObject(env.ECOS_BASE_RATE_JSON, null) ?? undefined,
+      usdKrwRate: parseJsonObject(env.ECOS_USDKRW_JSON, null) ?? undefined,
+      ktb3yYield: parseJsonObject(env.ECOS_KTB3Y_JSON, null) ?? undefined,
+    },
+    timeoutMs,
+  });
+  if (ecos) providers.push(ecos);
+  return providers;
+}
+
+function withMacro(base, env) {
+  const providers = macroProvidersFromEnv(env);
+  return providers.length ? createCompositeMarketDataAdapter({ base, providers }) : base;
+}
+
 export function createAdapterFromEnv(env = process.env) {
   if (env.MARKET_DATA_ADAPTER === 'mock') return createMockMarketDataAdapter();
   if (env.MARKET_DATA_ADAPTER === 'mock-stale') return createMockMarketDataAdapter({ stale: true });
   if (env.MARKET_DATA_ADAPTER === 'mock-error') return createMockMarketDataAdapter({ fail: true });
   if (env.MARKET_DATA_ADAPTER === 'yahoo-finance') {
-    return createYahooFinanceMarketDataAdapter({
+    return withMacro(createYahooFinanceMarketDataAdapter({
       source: env.MARKET_DATA_SOURCE || 'yahoo-finance-proxy',
       symbols: {
         kospi: env.YAHOO_FINANCE_KOSPI_SYMBOL || '^KS11',
@@ -1135,10 +1177,10 @@ export function createAdapterFromEnv(env = process.env) {
       dailyRange: env.YAHOO_FINANCE_DAILY_RANGE || '6mo',
       timeoutMs: parsePositiveNumber(env.YAHOO_FINANCE_TIMEOUT_MS, parsePositiveNumber(env.MARKET_DATA_TIMEOUT_MS, 5_000)),
       maxBodyBytes: parsePositiveNumber(env.YAHOO_FINANCE_MAX_BODY_BYTES, parsePositiveNumber(env.MARKET_DATA_MAX_BODY_BYTES, 768 * 1024)),
-    });
+    }), env);
   }
   if (env.MARKET_DATA_ADAPTER === 'krx-open-api') {
-    return createKrxOpenApiMarketDataAdapter({
+    return withMacro(createKrxOpenApiMarketDataAdapter({
       apiKey: env.KRX_OPEN_API_KEY,
       source: env.MARKET_DATA_SOURCE || 'krx-open-api',
       authHeaderName: env.KRX_OPEN_API_AUTH_HEADER_NAME || 'AUTH_KEY',
@@ -1171,10 +1213,10 @@ export function createAdapterFromEnv(env = process.env) {
         sourceApproval: env.KRX_OPEN_API_SOURCE_APPROVAL ?? env.MARKET_DATA_SOURCE_APPROVAL ?? 'unapproved',
         license: env.KRX_OPEN_API_LICENSE ?? env.MARKET_DATA_LICENSE ?? 'unspecified',
       },
-    });
+    }), env);
   }
   if (env.MARKET_DATA_ADAPTER === 'json-http') {
-    return createJsonHttpMarketDataAdapter({
+    return withMacro(createJsonHttpMarketDataAdapter({
       url: env.MARKET_DATA_URL,
       source: env.MARKET_DATA_SOURCE || 'json-http-market-data',
       headers: configuredHeadersFromEnv(env),
@@ -1187,7 +1229,7 @@ export function createAdapterFromEnv(env = process.env) {
         sourceApproval: env.MARKET_DATA_SOURCE_APPROVAL ?? 'unapproved',
         license: env.MARKET_DATA_LICENSE ?? 'unspecified',
       },
-    });
+    }), env);
   }
-  return createKrxFreeSourcePlaceholder({ apiKey: env.KRX_OPEN_API_KEY });
+  return withMacro(createKrxFreeSourcePlaceholder({ apiKey: env.KRX_OPEN_API_KEY }), env);
 }

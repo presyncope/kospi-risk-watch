@@ -137,6 +137,28 @@ function provenanceStatus(snapshot, key) {
   return snapshot.fields?.[key]?.freshness ?? 'unavailable';
 }
 
+function macroEvidence(snapshot = {}) {
+  const values = snapshot.values ?? {};
+  const freshness = (name) => snapshot.fields?.[name]?.freshness ?? 'unavailable';
+  const out = [];
+  if (Number.isFinite(values.vixLevel)) {
+    out.push({ key: 'vixLevel', label: 'VIX (위험 regime)', value: displayNumber(values.vixLevel), status: freshness('vix'), role: '미검증 매크로', detail: '미검증: 높을수록 위험회피·하방 위험.' });
+  }
+  if (Number.isFinite(values.usEquityChangePct)) {
+    out.push({ key: 'usEquityChangePct', label: '직전 미국장 변동', value: displayPercent(values.usEquityChangePct, { signed: true }), status: freshness('usEquity'), role: '미검증 매크로', detail: '미검증: 음수면 월요일 갭다운 위험을 높임.' });
+  }
+  if (Number.isFinite(values.us10yYield)) {
+    out.push({ key: 'us10yYield', label: '미 10년물 금리', value: displayNumber(values.us10yYield, '%'), status: freshness('us10y'), role: '매크로 맥락', detail: '미국 장기금리.' });
+  }
+  if (Number.isFinite(values.bokBaseRate)) {
+    out.push({ key: 'bokBaseRate', label: '한은 기준금리', value: displayNumber(values.bokBaseRate, '%'), status: freshness('bokBaseRate'), role: '매크로 맥락', detail: 'ECOS 기준금리.' });
+  }
+  if (Number.isFinite(values.usdKrwRate)) {
+    out.push({ key: 'usdKrwRate', label: 'USD/KRW (공식)', value: displayNumber(values.usdKrwRate), status: freshness('usdKrw'), role: '매크로 맥락', detail: 'ECOS 원/달러 기준율.' });
+  }
+  return out;
+}
+
 function buildDownsideInputEvidence({ snapshot = {}, probability = {}, expirySettlement = {}, marketPulse = {} } = {}) {
   const kospi = instrumentByKey(marketPulse, 'kospi');
   const kospi200 = instrumentByKey(marketPulse, 'kospi200');
@@ -189,6 +211,7 @@ function buildDownsideInputEvidence({ snapshot = {}, probability = {}, expirySet
       role: '선물 대체 아님',
       detail: kospi200 ? `${kospi200.symbol} · 선물/OI/옵션 데이터가 아닌 지수 차트입니다.` : 'KOSPI200 1분봉 프록시가 없습니다.',
     },
+    ...macroEvidence(snapshot),
   ];
 }
 
@@ -203,6 +226,8 @@ export function buildDashboardState(snapshot, { asOf = new Date(), service = {} 
     recentMomentum: snapshot.values?.recentMomentum ?? null,
     volatilityZScore: snapshot.values?.volatilityZScore ?? null,
     expiryRiskLevel: expirySettlement.riskLevel,
+    vixLevel: snapshot.values?.vixLevel ?? null,
+    usEquityChangePct: snapshot.values?.usEquityChangePct ?? null,
     provenance: snapshot.fields ?? {},
   });
   const derivativesMarket = buildDerivativesMarketContext({ snapshot, expirySettlement });

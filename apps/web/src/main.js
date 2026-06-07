@@ -62,6 +62,16 @@ const FIELD_LABELS = new Map([
   ['kospiIntraday', 'KOSPI 1분봉'],
   ['kospi200Intraday', 'KOSPI200 지수 1분봉'],
   ['usdKrwIntraday', 'USD/KRW 1분봉'],
+  ['vixLevel', 'VIX'],
+  ['usEquityChangePct', '직전 미국장 변동'],
+  ['us10yYield', '미 10년물 금리'],
+  ['bokBaseRate', '한은 기준금리'],
+  ['usdKrwRate', 'USD/KRW(공식)'],
+  ['vix', 'VIX'],
+  ['usEquity', '미국 주가지수'],
+  ['us10y', '미 10년물'],
+  ['usdKrw', 'USD/KRW(공식)'],
+  ['ktb3y', '국고 3년'],
   ['expirySettlementRisk', '만기·결제 근접도'],
   ['dashboard-api', '대시보드 API'],
   ['adapter', '어댑터'],
@@ -267,7 +277,7 @@ function renderInverseSignal(signal = {}) {
   const stanceNode = $('#action-stance');
   if (stanceNode) {
     stanceNode.className = `status ${statusClass(status)}`;
-    stanceNode.textContent = `${signal.stance ?? '평가 불가'} · 신뢰도 ${labelStatus(signal.confidence ?? 'none')}`;
+    stanceNode.textContent = `${signal.stance ?? '평가 불가'} · 신뢰도 ${labelStatus(signal.confidence ?? 'none')}${signal.unvalidated ? ' · 미검증' : ''}`;
   }
   setText('#action-caveat', translateText(signal.caveat ?? ''));
   renderProximity(signal.thresholdProximity, signal.stance);
@@ -308,7 +318,7 @@ function renderProbability(probability = {}) {
   setGauge('#probability-gauge', probability.probability, status, '월요일 하락 확률');
   const statusNode = $('#probability-status');
   statusNode.className = `status ${statusClass(status)}`;
-  statusNode.textContent = `${labelStatus(status)} · 데이터 신선도 ${labelStatus(probability.confidence ?? 'none')}`;
+  statusNode.textContent = `${labelStatus(status)} · 데이터 신선도 ${labelStatus(probability.confidence ?? 'none')}${probability.unvalidated ? ' · 미검증(매크로 보정)' : ''}`;
   renderDefinitionList('#probability-meta', [
     ['계산식', probability.formula],
     ['누락 입력', probability.missingInputs?.length ? probability.missingInputs.map(labelField).join(', ') : '없음'],
