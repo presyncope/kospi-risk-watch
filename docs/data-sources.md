@@ -11,8 +11,9 @@ This dashboard treats source status as a first-class product feature. A missing,
 | `mock-market-data` stale mode | `MARKET_DATA_ADAPTER=mock-stale` | `stale` | Data-quality alert testing. |
 | `mock-market-data` error mode | `MARKET_DATA_ADAPTER=mock-error` | `error` | Error rendering and degraded-state testing. |
 | `json-http-market-data` | `MARKET_DATA_ADAPTER=json-http` + `MARKET_DATA_URL` | `fresh`/`error` depending on upstream payload | Strict normalized JSON integration boundary for future approved sources and tests. |
+| `krx-open-api` | `MARKET_DATA_ADAPTER=krx-open-api` + KRX endpoint URLs + `KRX_OPEN_API_KEY` | `fresh`/`partial`/`error` depending on approved endpoint responses | Direct KRX OPEN API polling boundary for configured service URLs; remains unapproved for `liveReady` until registry approval is added. |
 
-A provided `KRX_OPEN_API_KEY` currently selects only a placeholder. It documents where a later approved KRX adapter should attach, but it still returns `unavailable` in this MVP.
+The default runtime still uses `krx-free-source-placeholder`. A provided `KRX_OPEN_API_KEY` alone is not enough: the direct KRX adapter is selected only with `MARKET_DATA_ADAPTER=krx-open-api` and explicit endpoint URLs. This prevents an API key from silently making live-data claims before service approvals, endpoint mapping, and data-rights review are complete.
 
 ## Adapter contract
 
@@ -82,6 +83,40 @@ Optional environment variables:
 | `MARKET_DATA_SOURCE_APPROVAL`, `MARKET_DATA_LICENSE` | Approval/license claims that must match the system-owned registry before live readiness. |
 
 The adapter accepts only a JSON object with `fields` as an object and optional `values` as an object. Top-level and field-level freshness must be explicitly valid; missing or invalid freshness is normalized to `unavailable`. Field keys are whitelisted to the known product fields, and field provenance `source`, `observedAt`, `details`, plus adapter capability strings are sanitized or replaced with safe fallbacks before public exposure. Public values are whitelisted to the known numeric/calendar keys used by this product; unknown keys, non-finite values, out-of-range baseline rates, unsafe text, numeric-looking strings, and invalid holiday-calendar arrays are dropped before `/api/snapshot` or `/api/dashboard` can expose them. Invalid JSON, non-object payloads, oversized or over-`Content-Length` bodies, failed HTTP status, timeouts, or provider errors produce `freshness: "error"` with stable public codes. Adapter messages/details are sanitized to hide credentials, private hosts, URLs, stack traces, and raw provider diagnostics. If an auth header is configured, plain `http:` upstream URLs are rejected before any fetch is attempted.
+
+## KRX OPEN API adapter
+
+`MARKET_DATA_ADAPTER=krx-open-api` enables a direct KRX OPEN API polling adapter. KRX OPEN API service pages require login/auth-key application, API service search/spec review, API utilization application, and administrator approval before service use. Public market-data distribution may also require a separate market-data ordering/license process depending on use.
+
+Required and optional environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `KRX_OPEN_API_KEY` | KRX OPEN API credential sent as the `AUTH_KEY` header by default. |
+| `KRX_OPEN_API_AUTH_HEADER_NAME` | Optional header name override; defaults to `AUTH_KEY`. |
+| `KRX_OPEN_API_KOSPI_DAILY_URL` | Approved KOSPI daily index endpoint URL. Used to derive `kospiDaily`, `historicalMondayDownRate`, `recentMomentum`, and volatility. |
+| `KRX_OPEN_API_KOSPI200_DAILY_URL` | Approved KOSPI200 daily index endpoint URL. Used with futures rows to derive `futuresBasis`. |
+| `KRX_OPEN_API_FUTURES_URL` | Approved KOSPI200 futures endpoint URL. Used for futures open interest, volume, and futures price. |
+| `KRX_OPEN_API_OPTIONS_URL` | Approved KOSPI200 options endpoint URL. Used for options open interest, volume, and put/call ratio. |
+| `KRX_OPEN_API_INVESTOR_FLOW_URL` | Approved investor-flow endpoint URL. Used for foreign-investor KOSPI200 futures flow when present. |
+| `KRX_OPEN_API_HOLIDAY_CALENDAR_URL` | Approved holiday/trading-calendar endpoint URL. Used to apply expiry/settlement holiday adjustment. |
+| `KRX_OPEN_API_COMMON_PARAMS_JSON` | Optional JSON object appended to every endpoint URL; defaults to `{ "reqType": "json" }`. |
+| `KRX_OPEN_API_*_PARAMS_JSON` | Optional per-endpoint JSON query params, e.g. `KRX_OPEN_API_KOSPI_DAILY_PARAMS_JSON='{"API_ID":"..."}'`. |
+| `KRX_OPEN_API_TIMEOUT_MS` / `KRX_OPEN_API_MAX_BODY_BYTES` | Optional fetch timeout/body cap; defaults are 5000 ms and 512 KiB. |
+| `KRX_OPEN_API_LIVE`, `KRX_OPEN_API_APPROVED_PUBLIC`, `KRX_OPEN_API_READINESS_ALLOWED` | Adapter capability flags. They are necessary but still insufficient for `liveReady` without registry approval. |
+| `KRX_OPEN_API_SOURCE_APPROVAL`, `KRX_OPEN_API_LICENSE` | Approval/license identifiers that must match `APPROVED_LIVE_SOURCE_REGISTRY` before live readiness can unlock. |
+
+The adapter accepts KRX-style JSON table payloads with row arrays nested anywhere within the response object. It uses conservative aliases for date, close, price, volume, open-interest, option side, investor type, and net-flow columns. It computes:
+
+- `historicalMondayDownRate` from Monday KOSPI closes versus the previous trading row.
+- `recentMomentum` and `volatilityZScore` from recent KOSPI closes.
+- `futuresBasis` from the configured futures price minus KOSPI200 spot/index reference.
+- Futures/options open interest and volume by summing configured endpoint rows.
+- `putCallRatio` from option side and volume rows.
+- `foreignerNetFutures` from the foreign-investor futures-flow row.
+- `holidayCalendar` from configured holiday/trading-calendar date rows.
+
+If a configured endpoint fails or does not provide a parseable field, that field remains explicitly `unavailable`; if every configured endpoint fails, the adapter returns a sanitized `error` snapshot. Provider exceptions, secrets, URLs with private diagnostics, and unsupported fields are not exposed verbatim.
 
 ## Future KRX/free-source adapter rules
 

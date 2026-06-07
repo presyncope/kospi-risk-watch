@@ -42,12 +42,18 @@ Optional environment variables:
 | Variable | Values | Purpose |
 | --- | --- | --- |
 | `PORT` | number | Local server port; defaults to `4173`. |
-| `MARKET_DATA_ADAPTER` | `mock`, `mock-stale`, `mock-error`, `json-http` | Uses deterministic mock snapshots or the strict normalized JSON integration adapter. |
+| `MARKET_DATA_ADAPTER` | `mock`, `mock-stale`, `mock-error`, `json-http`, `krx-open-api` | Uses deterministic mock snapshots, the strict normalized JSON integration adapter, or configured KRX OPEN API endpoint polling. |
 | `MARKET_DATA_URL` | URL | Required only for `MARKET_DATA_ADAPTER=json-http`; must return the normalized snapshot contract documented in `docs/data-sources.md`. |
-| `MARKET_DATA_SOURCE` | string | Canonical source id for `json-http`; defaults to `json-http-market-data`. |
+| `MARKET_DATA_SOURCE` | string | Canonical source id for `json-http` or `krx-open-api`; defaults to `json-http-market-data` or `krx-open-api`. |
 | `MARKET_DATA_AUTH_HEADER_NAME` / `MARKET_DATA_AUTH_HEADER_VALUE` | strings | Optional environment-only header pair for `json-http`; rejected on plain `http:` URLs. |
 | `MARKET_DATA_TIMEOUT_MS` / `MARKET_DATA_MAX_BODY_BYTES` | numbers | Optional timeout/body limits for `json-http`; defaults are 5000 ms and 256 KiB. |
-| `KRX_OPEN_API_KEY` | credential string | Reserved for a future approved KRX adapter; current implementation still returns an unavailable placeholder until KRX service approvals/endpoints are configured. |
+| `KRX_OPEN_API_KEY` | credential string | Required for `MARKET_DATA_ADAPTER=krx-open-api`; sent as `AUTH_KEY` by default. |
+| `KRX_OPEN_API_KOSPI_DAILY_URL` | URL | Approved KRX KOSPI daily endpoint; derives KOSPI input freshness, Monday baseline rate, momentum, and volatility. |
+| `KRX_OPEN_API_KOSPI200_DAILY_URL` | URL | Approved KRX KOSPI200 daily endpoint; used with futures rows to derive basis. |
+| `KRX_OPEN_API_FUTURES_URL` / `KRX_OPEN_API_OPTIONS_URL` | URLs | Approved KRX futures/options endpoint URLs for open interest, volume, basis, and put/call ratio inputs. |
+| `KRX_OPEN_API_INVESTOR_FLOW_URL` / `KRX_OPEN_API_HOLIDAY_CALENDAR_URL` | URLs | Optional approved KRX endpoints for foreigner futures flow and holiday-calendar adjustment. |
+| `KRX_OPEN_API_COMMON_PARAMS_JSON` / `KRX_OPEN_API_*_PARAMS_JSON` | JSON object strings | Query params appended to every endpoint or a specific endpoint, e.g. an approved `API_ID`. |
+| `KRX_OPEN_API_LIVE`, `KRX_OPEN_API_APPROVED_PUBLIC`, `KRX_OPEN_API_READINESS_ALLOWED`, `KRX_OPEN_API_SOURCE_APPROVAL`, `KRX_OPEN_API_LICENSE` | strings/flags | Capability and approval claims; still insufficient for `production-live-ready` until the source/license pair is added to the system-owned approval registry. |
 
 Examples:
 
@@ -56,6 +62,21 @@ MARKET_DATA_ADAPTER=mock npm run dev
 MARKET_DATA_ADAPTER=mock-stale npm run dev
 MARKET_DATA_ADAPTER=mock-error npm run dev
 ```
+
+Example KRX OPEN API shape after service approval and endpoint mapping:
+
+```sh
+MARKET_DATA_ADAPTER=krx-open-api \
+KRX_OPEN_API_KEY=... \
+KRX_OPEN_API_KOSPI_DAILY_URL='https://openapi.krx.co.kr/...' \
+KRX_OPEN_API_KOSPI_DAILY_PARAMS_JSON='{"API_ID":"approved-kospi-daily-id"}' \
+KRX_OPEN_API_KOSPI200_DAILY_URL='https://openapi.krx.co.kr/...' \
+KRX_OPEN_API_FUTURES_URL='https://openapi.krx.co.kr/...' \
+KRX_OPEN_API_OPTIONS_URL='https://openapi.krx.co.kr/...' \
+npm run dev
+```
+
+The direct KRX adapter can populate dashboard fields when approved endpoints respond, but `liveReady` remains false until the configured source/license pair is reviewed and added to `APPROVED_LIVE_SOURCE_REGISTRY`.
 
 ## Verify
 
@@ -106,7 +127,7 @@ The production readiness panel is an operational/data-rights gate, not market di
 
 ## Data source limits
 
-The MVP is designed around free/public data polling but intentionally does not claim live KRX connectivity. Without an approved and implemented adapter, the default source is `krx-free-source-placeholder` and returns `unavailable` rather than fake live data. Fresh-looking future adapters are still rejected for live readiness unless they declare explicit `liveMarketData`, `approvedPublic`, and `readinessAllowed` capabilities **and** their source/license pair is present in the system-owned live-source approval registry.
+The MVP is designed around free/public data polling but intentionally does not claim live KRX readiness by default. Without approved endpoint URLs, the default source is `krx-free-source-placeholder` and returns `unavailable` rather than fake live data. The implemented `krx-open-api` adapter must be explicitly selected and configured with approved KRX service URLs. Fresh-looking adapters are still rejected for live readiness unless they declare explicit `liveMarketData`, `approvedPublic`, and `readinessAllowed` capabilities **and** their source/license pair is present in the system-owned live-source approval registry.
 
 KRX planning references captured during requirements/planning:
 

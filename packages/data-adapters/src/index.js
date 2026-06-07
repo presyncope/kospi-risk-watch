@@ -5,6 +5,7 @@ const PUBLIC_ADAPTER_ERROR_CODES = new Set([
   'adapter_snapshot_error',
   'adapter_field_error',
   'adapter_json_http_failed',
+  'adapter_krx_open_api_failed',
   'adapter_polling_failed',
 ]);
 
@@ -316,6 +317,16 @@ function parsePositiveNumber(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function parseJsonObject(value, fallback = {}) {
+  if (!value) return fallback;
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function hasConfiguredHeaders(headers) {
   if (!headers) return false;
   if (typeof Headers === 'function' && headers instanceof Headers) return Array.from(headers.keys()).length > 0;
@@ -373,6 +384,377 @@ async function readResponseText(response, maxBytes) {
     return text;
   }
   throw new Error('adapter_response_body_unreadable');
+}
+
+function appendQueryParams(url, params = {}) {
+  const parsed = new URL(url);
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null || value === '') continue;
+    parsed.searchParams.set(key, String(value));
+  }
+  return parsed.href;
+}
+
+function normalizeDateKey(value) {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, '');
+  const key = digits.length === 8
+    ? `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`
+    : raw.slice(0, 10);
+  const parsed = new Date(`${key}T00:00:00Z`);
+  if (!DATE_KEY_PATTERN.test(key) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== key) return null;
+  return key;
+}
+
+function parseNumberLike(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '-' || trimmed.toLowerCase() === 'nan') return null;
+  const normalized = trimmed.replace(/,/g, '').replace(/%$/, '');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function compactKey(key) {
+  return String(key ?? '').toLowerCase().replace(/[^a-z0-9가-힣]/g, '');
+}
+
+function valueByAliases(row, aliases) {
+  if (!isRecord(row)) return null;
+  const direct = aliases.find((alias) => row[alias] != null);
+  if (direct) return row[direct];
+  const compactAliases = aliases.map(compactKey);
+  for (const [key, value] of Object.entries(row)) {
+    if (compactAliases.includes(compactKey(key))) return value;
+  }
+  return null;
+}
+
+function extractRows(payload) {
+  if (Array.isArray(payload)) return payload.filter(isRecord);
+  if (!isRecord(payload)) return [];
+  const arrays = [];
+  const visit = (value, depth = 0) => {
+    if (depth > 4 || value == null) return;
+    if (Array.isArray(value)) {
+      const rows = value.filter(isRecord);
+      if (rows.length) arrays.push(rows);
+      return;
+    }
+    if (isRecord(value)) {
+      for (const child of Object.values(value)) visit(child, depth + 1);
+    }
+  };
+  visit(payload);
+  arrays.sort((a, b) => b.length - a.length);
+  return arrays[0] ?? [];
+}
+
+const DATE_ALIASES = ['TRD_DD', 'BAS_DD', 'basDd', 'trdDd', 'date', 'tradeDate', '일자', '기준일'];
+const CLOSE_ALIASES = ['CLSPRC_IDX', 'IDX_CLSPRC', 'CLSPRC', 'close', 'closePrice', '종가', '지수종가'];
+const FUTURES_PRICE_ALIASES = ['CLSPRC', 'SETL_PRC', 'close', 'settlementPrice', '종가', '정산가격'];
+const OPEN_INTEREST_ALIASES = ['OPN_INT_QTY', 'OPEN_INTEREST', 'openInterest', '미결제약정', '미결제약정수량'];
+const VOLUME_ALIASES = ['ACC_TRDVOL', 'TRD_QTY', 'volume', 'tradingVolume', '거래량'];
+const INVESTOR_ALIASES = ['INVST_TP_NM', 'INVESTOR_NM', 'investorType', '투자자구분', '투자자'];
+const NET_FLOW_ALIASES = ['NET_BUY_QTY', 'NET_TRD_QTY', 'netFlow', '순매매' + '수량', '순거래량'];
+const OPTION_SIDE_ALIASES = ['RGHT_TP_NM', 'PUT_CALL', 'optionType', 'cp', '권리구분', '콜풋구분'];
+
+function buildDailySeries(rows) {
+  return rows
+    .map((row) => ({
+      date: normalizeDateKey(valueByAliases(row, DATE_ALIASES)),
+      close: parseNumberLike(valueByAliases(row, CLOSE_ALIASES)),
+    }))
+    .filter((row) => row.date && Number.isFinite(row.close))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function mondayDownRate(series) {
+  let mondayCount = 0;
+  let downCount = 0;
+  for (let index = 1; index < series.length; index += 1) {
+    const row = series[index];
+    const previous = series[index - 1];
+    const day = new Date(`${row.date}T00:00:00Z`).getUTCDay();
+    if (day !== 1) continue;
+    mondayCount += 1;
+    if (row.close < previous.close) downCount += 1;
+  }
+  return mondayCount > 0 ? downCount / mondayCount : null;
+}
+
+function recentMomentum(series, lookback = 5) {
+  if (series.length < 2) return null;
+  const last = series.at(-1);
+  const prior = series[Math.max(0, series.length - 1 - lookback)];
+  if (!Number.isFinite(last.close) || !Number.isFinite(prior.close) || prior.close === 0) return null;
+  return last.close / prior.close - 1;
+}
+
+function volatilityZScore(series) {
+  if (series.length < 4) return null;
+  const returns = [];
+  for (let index = 1; index < series.length; index += 1) {
+    const previous = series[index - 1].close;
+    const current = series[index].close;
+    if (previous > 0 && Number.isFinite(current)) returns.push(Math.abs(current / previous - 1));
+  }
+  if (returns.length < 3) return null;
+  const last = returns.at(-1);
+  const history = returns.slice(0, -1);
+  const mean = history.reduce((sum, value) => sum + value, 0) / history.length;
+  const variance = history.reduce((sum, value) => sum + (value - mean) ** 2, 0) / history.length;
+  const std = Math.sqrt(variance);
+  return std > 0 ? (last - mean) / std : 0;
+}
+
+function sumRows(rows, aliases) {
+  return rows.reduce((sum, row) => {
+    const value = parseNumberLike(valueByAliases(row, aliases));
+    return Number.isFinite(value) ? sum + value : sum;
+  }, 0);
+}
+
+function firstNumeric(rows, aliases) {
+  for (const row of rows) {
+    const value = parseNumberLike(valueByAliases(row, aliases));
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function optionSide(row) {
+  const raw = String(valueByAliases(row, OPTION_SIDE_ALIASES) ?? '').toLowerCase();
+  if (raw.includes('put') || raw.includes('풋') || raw === 'p') return 'put';
+  if (raw.includes('call') || raw.includes('콜') || raw === 'c') return 'call';
+  return null;
+}
+
+function putCallRatio(rows) {
+  let putVolume = 0;
+  let callVolume = 0;
+  for (const row of rows) {
+    const volume = parseNumberLike(valueByAliases(row, VOLUME_ALIASES));
+    if (!Number.isFinite(volume)) continue;
+    const side = optionSide(row);
+    if (side === 'put') putVolume += volume;
+    if (side === 'call') callVolume += volume;
+  }
+  return callVolume > 0 ? putVolume / callVolume : null;
+}
+
+function foreignerNetFutures(rows) {
+  for (const row of rows) {
+    const investor = String(valueByAliases(row, INVESTOR_ALIASES) ?? '').toLowerCase();
+    if (!investor.includes('foreign') && !investor.includes('외국')) continue;
+    const value = parseNumberLike(valueByAliases(row, NET_FLOW_ALIASES));
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function holidayDates(rows) {
+  const dates = rows
+    .map((row) => normalizeDateKey(valueByAliases(row, DATE_ALIASES)))
+    .filter(Boolean);
+  return [...new Set(dates)];
+}
+
+async function fetchKrxJsonEndpoint({ url, apiKey, authHeaderName, params, fetchImpl, timeoutMs, maxBodyBytes }) {
+  const endpointUrl = appendQueryParams(url, params);
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetchImpl(endpointUrl, {
+      headers: {
+        [authHeaderName]: apiKey,
+        accept: 'application/json',
+      },
+      signal: controller?.signal,
+    });
+    if (!response?.ok) throw new Error('adapter_krx_http_status_error');
+    const text = await readResponseText(response, maxBodyBytes);
+    return JSON.parse(text);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function markField(fields, name, { source, observedAt, freshness = FRESHNESS.FRESH, details = null }) {
+  fields[name] = { source, observedAt, freshness, details };
+}
+
+function krxUnavailableSnapshot({ source, observedAt, message, freshness = FRESHNESS.UNAVAILABLE, error = null, capabilities = {} }) {
+  return normalizeAdapterResult({
+    source,
+    observedAt,
+    freshness,
+    error,
+    message,
+    capabilities,
+    fields: unavailableFields(source, observedAt, { freshness, details: message }),
+    values: {},
+  });
+}
+
+export function createKrxOpenApiMarketDataAdapter({
+  apiKey,
+  endpoints = {},
+  endpointParams = {},
+  commonParams = { reqType: 'json' },
+  source = 'krx-open-api',
+  authHeaderName = 'AUTH_KEY',
+  fetchImpl = globalThis.fetch,
+  timeoutMs = 5_000,
+  maxBodyBytes = 512 * 1024,
+  capabilities = {},
+} = {}) {
+  if (!apiKey) return createUnavailableAdapter('krx-open-api-unconfigured-key');
+  const configuredEntries = Object.entries(endpoints).filter(([, url]) => typeof url === 'string' && url.trim());
+  if (configuredEntries.length === 0) {
+    return createUnavailableAdapter('krx-open-api-unconfigured-endpoints');
+  }
+  return {
+    source,
+    async getSnapshot() {
+      const observedAt = new Date().toISOString();
+      if (typeof fetchImpl !== 'function') {
+        return krxUnavailableSnapshot({
+          source,
+          observedAt,
+          freshness: FRESHNESS.ERROR,
+          error: 'adapter_krx_open_api_failed',
+          message: 'KRX OPEN API source cannot be fetched in this runtime.',
+          capabilities: { sourceApproval: 'error' },
+        });
+      }
+      const payloads = {};
+      const failed = [];
+      await Promise.all(configuredEntries.map(async ([key, url]) => {
+        try {
+          payloads[key] = await fetchKrxJsonEndpoint({
+            url,
+            apiKey,
+            authHeaderName,
+            params: { ...commonParams, ...(endpointParams[key] ?? {}) },
+            fetchImpl,
+            timeoutMs,
+            maxBodyBytes,
+          });
+        } catch {
+          failed.push(key);
+        }
+      }));
+
+      if (Object.keys(payloads).length === 0) {
+        return krxUnavailableSnapshot({
+          source,
+          observedAt,
+          freshness: FRESHNESS.ERROR,
+          error: 'adapter_krx_open_api_failed',
+          message: 'Configured KRX OPEN API endpoints could not be polled; details are hidden from the public dashboard.',
+          capabilities: { sourceApproval: 'error' },
+        });
+      }
+
+      const fields = unavailableFields(source, observedAt, {
+        freshness: FRESHNESS.UNAVAILABLE,
+        details: 'KRX OPEN API endpoint did not provide this normalized field.',
+      });
+      const values = {};
+      const kospiRows = extractRows(payloads.kospiDaily);
+      const kospiSeries = buildDailySeries(kospiRows);
+      if (kospiSeries.length >= 2) {
+        markField(fields, 'kospiDaily', { source, observedAt, details: 'Derived from configured KRX KOSPI daily endpoint.' });
+        const baseline = mondayDownRate(kospiSeries);
+        if (Number.isFinite(baseline)) {
+          values.historicalMondayDownRate = baseline;
+          markField(fields, 'historicalMondayDownRate', { source, observedAt, details: 'Computed from Monday KOSPI closes in the configured KRX daily endpoint.' });
+        }
+        const momentum = recentMomentum(kospiSeries);
+        if (Number.isFinite(momentum)) {
+          values.recentMomentum = momentum;
+          markField(fields, 'recentMomentum', { source, observedAt, details: 'Computed from recent KOSPI closes in the configured KRX daily endpoint.' });
+        }
+        const volZ = volatilityZScore(kospiSeries);
+        if (Number.isFinite(volZ)) {
+          values.volatilityZScore = volZ;
+          markField(fields, 'volatility', { source, observedAt, details: 'Computed from recent KOSPI return volatility in the configured KRX daily endpoint.' });
+        }
+      }
+
+      const kospi200Series = buildDailySeries(extractRows(payloads.kospi200Daily));
+      const kospi200Spot = kospi200Series.at(-1)?.close ?? null;
+      if (Number.isFinite(kospi200Spot)) {
+        markField(fields, 'kospi200', { source, observedAt, details: 'Latest KOSPI200 spot/index reference from configured KRX endpoint.' });
+      }
+
+      const futuresRows = extractRows(payloads.futures);
+      const futuresOpenInterest = sumRows(futuresRows, OPEN_INTEREST_ALIASES);
+      const futuresVolume = sumRows(futuresRows, VOLUME_ALIASES);
+      const futuresPrice = firstNumeric(futuresRows, FUTURES_PRICE_ALIASES);
+      if (futuresOpenInterest > 0) {
+        values.futuresOpenInterest = futuresOpenInterest;
+        markField(fields, 'futuresOpenInterest', { source, observedAt, details: 'Summed from configured KRX futures endpoint rows.' });
+      }
+      if (futuresVolume > 0) {
+        values.futuresVolume = futuresVolume;
+        markField(fields, 'futuresVolume', { source, observedAt, details: 'Summed from configured KRX futures endpoint rows.' });
+      }
+      if (Number.isFinite(futuresPrice) && Number.isFinite(kospi200Spot)) {
+        values.futuresBasis = futuresPrice - kospi200Spot;
+        markField(fields, 'futuresBasis', { source, observedAt, details: 'Nearest configured futures price minus KOSPI200 spot/index reference.' });
+      }
+
+      const optionsRows = extractRows(payloads.options);
+      const optionsOpenInterest = sumRows(optionsRows, OPEN_INTEREST_ALIASES);
+      const optionsVolume = sumRows(optionsRows, VOLUME_ALIASES);
+      const ratio = putCallRatio(optionsRows);
+      if (optionsOpenInterest > 0) {
+        values.optionsOpenInterest = optionsOpenInterest;
+        markField(fields, 'optionsOpenInterest', { source, observedAt, details: 'Summed from configured KRX options endpoint rows.' });
+      }
+      if (optionsVolume > 0) {
+        values.optionsVolume = optionsVolume;
+        markField(fields, 'optionsVolume', { source, observedAt, details: 'Summed from configured KRX options endpoint rows.' });
+      }
+      if (Number.isFinite(ratio)) {
+        values.putCallRatio = ratio;
+        markField(fields, 'putCallRatio', { source, observedAt, details: 'Computed from configured KRX options endpoint side and volume rows.' });
+      }
+
+      const flow = foreignerNetFutures(extractRows(payloads.investorFlow));
+      if (Number.isFinite(flow)) {
+        values.foreignerNetFutures = flow;
+        markField(fields, 'foreignerNetFutures', { source, observedAt, details: 'Parsed from configured KRX futures investor-flow endpoint.' });
+      }
+
+      const holidays = holidayDates(extractRows(payloads.holidayCalendar));
+      if (holidays.length > 0) {
+        values.holidayCalendar = holidays;
+        markField(fields, 'holidayCalendar', { source, observedAt, details: 'Parsed from configured KRX holiday calendar endpoint.' });
+      }
+
+      markField(fields, 'derivativesCalendar', { source: 'krx-calendar-rules', observedAt, details: 'Rule-based KOSPI200 expiry calendar is available.' });
+      const producedFreshFields = Object.values(fields).filter((field) => field.freshness === FRESHNESS.FRESH).length;
+      const freshness = producedFreshFields > 1 ? FRESHNESS.FRESH : FRESHNESS.UNAVAILABLE;
+      return normalizeAdapterResult({
+        source,
+        observedAt,
+        freshness,
+        error: failed.length === configuredEntries.length ? 'adapter_krx_open_api_failed' : null,
+        message: failed.length
+          ? 'Configured KRX OPEN API source returned partial data; unavailable fields remain explicit.'
+          : 'Configured KRX OPEN API source was polled and normalized.',
+        capabilities,
+        fields,
+        values,
+      });
+    },
+  };
 }
 
 export function createJsonHttpMarketDataAdapter({
@@ -439,6 +821,42 @@ export function createAdapterFromEnv(env = process.env) {
   if (env.MARKET_DATA_ADAPTER === 'mock') return createMockMarketDataAdapter();
   if (env.MARKET_DATA_ADAPTER === 'mock-stale') return createMockMarketDataAdapter({ stale: true });
   if (env.MARKET_DATA_ADAPTER === 'mock-error') return createMockMarketDataAdapter({ fail: true });
+  if (env.MARKET_DATA_ADAPTER === 'krx-open-api') {
+    return createKrxOpenApiMarketDataAdapter({
+      apiKey: env.KRX_OPEN_API_KEY,
+      source: env.MARKET_DATA_SOURCE || 'krx-open-api',
+      authHeaderName: env.KRX_OPEN_API_AUTH_HEADER_NAME || 'AUTH_KEY',
+      endpoints: {
+        kospiDaily: env.KRX_OPEN_API_KOSPI_DAILY_URL,
+        kospi200Daily: env.KRX_OPEN_API_KOSPI200_DAILY_URL,
+        futures: env.KRX_OPEN_API_FUTURES_URL,
+        options: env.KRX_OPEN_API_OPTIONS_URL,
+        investorFlow: env.KRX_OPEN_API_INVESTOR_FLOW_URL,
+        holidayCalendar: env.KRX_OPEN_API_HOLIDAY_CALENDAR_URL,
+      },
+      commonParams: {
+        reqType: 'json',
+        ...parseJsonObject(env.KRX_OPEN_API_COMMON_PARAMS_JSON),
+      },
+      endpointParams: {
+        kospiDaily: parseJsonObject(env.KRX_OPEN_API_KOSPI_DAILY_PARAMS_JSON),
+        kospi200Daily: parseJsonObject(env.KRX_OPEN_API_KOSPI200_DAILY_PARAMS_JSON),
+        futures: parseJsonObject(env.KRX_OPEN_API_FUTURES_PARAMS_JSON),
+        options: parseJsonObject(env.KRX_OPEN_API_OPTIONS_PARAMS_JSON),
+        investorFlow: parseJsonObject(env.KRX_OPEN_API_INVESTOR_FLOW_PARAMS_JSON),
+        holidayCalendar: parseJsonObject(env.KRX_OPEN_API_HOLIDAY_CALENDAR_PARAMS_JSON),
+      },
+      timeoutMs: parsePositiveNumber(env.KRX_OPEN_API_TIMEOUT_MS, parsePositiveNumber(env.MARKET_DATA_TIMEOUT_MS, 5_000)),
+      maxBodyBytes: parsePositiveNumber(env.KRX_OPEN_API_MAX_BODY_BYTES, parsePositiveNumber(env.MARKET_DATA_MAX_BODY_BYTES, 512 * 1024)),
+      capabilities: {
+        liveMarketData: envFlag(env.KRX_OPEN_API_LIVE ?? env.MARKET_DATA_LIVE),
+        approvedPublic: envFlag(env.KRX_OPEN_API_APPROVED_PUBLIC ?? env.MARKET_DATA_APPROVED_PUBLIC),
+        readinessAllowed: envFlag(env.KRX_OPEN_API_READINESS_ALLOWED ?? env.MARKET_DATA_READINESS_ALLOWED),
+        sourceApproval: env.KRX_OPEN_API_SOURCE_APPROVAL ?? env.MARKET_DATA_SOURCE_APPROVAL ?? 'unapproved',
+        license: env.KRX_OPEN_API_LICENSE ?? env.MARKET_DATA_LICENSE ?? 'unspecified',
+      },
+    });
+  }
   if (env.MARKET_DATA_ADAPTER === 'json-http') {
     return createJsonHttpMarketDataAdapter({
       url: env.MARKET_DATA_URL,

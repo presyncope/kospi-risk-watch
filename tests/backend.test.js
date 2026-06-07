@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAppServer } from '../apps/api/src/server.js';
 import { FRESHNESS } from '../packages/core/src/index.js';
-import { createJsonHttpMarketDataAdapter, createMockMarketDataAdapter, createUnavailableAdapter, normalizeAdapterResult } from '../packages/data-adapters/src/index.js';
+import { createAdapterFromEnv, createJsonHttpMarketDataAdapter, createKrxOpenApiMarketDataAdapter, createMockMarketDataAdapter, createUnavailableAdapter, normalizeAdapterResult } from '../packages/data-adapters/src/index.js';
 
 async function withServer(server, fn) {
   await new Promise((resolve) => server.listen(0, resolve));
@@ -414,6 +414,134 @@ test('dashboard endpoint includes production readiness', async () => {
     assert.ok(Array.isArray(body.productionReadiness.checks));
     assert.ok(body.productionReadiness.blockers.some((blocker) => blocker.includes('registry')));
   });
+});
+
+test('KRX OPEN API adapter maps configured live endpoint rows through the approval gate', async () => {
+  const fetchCalls = [];
+  const payloads = {
+    'https://krx.example.test/kospi': {
+      OutBlock_1: [
+        { TRD_DD: '20260529', CLSPRC_IDX: '100.00' },
+        { TRD_DD: '20260601', CLSPRC_IDX: '98.00' },
+        { TRD_DD: '20260602', CLSPRC_IDX: '99.00' },
+        { TRD_DD: '20260603', CLSPRC_IDX: '97.00' },
+        { TRD_DD: '20260608', CLSPRC_IDX: '96.00' },
+      ],
+    },
+    'https://krx.example.test/kospi200': {
+      rows: [{ BAS_DD: '20260608', IDX_CLSPRC: '300.00' }],
+    },
+    'https://krx.example.test/futures': {
+      output: [{ TRD_DD: '20260608', CLSPRC: '302.50', OPN_INT_QTY: '1,000', ACC_TRDVOL: '200' }],
+    },
+    'https://krx.example.test/options': {
+      output: [
+        { TRD_DD: '20260608', RGHT_TP_NM: '풋', OPN_INT_QTY: '2,000', ACC_TRDVOL: '300' },
+        { TRD_DD: '20260608', RGHT_TP_NM: '콜', OPN_INT_QTY: '1,000', ACC_TRDVOL: '100' },
+      ],
+    },
+    'https://krx.example.test/flow': {
+      rows: [{ TRD_DD: '20260608', INVST_TP_NM: '외국인', NET_TRD_QTY: '-42' }],
+    },
+    'https://krx.example.test/holiday': {
+      rows: [{ BAS_DD: '20260603' }],
+    },
+  };
+  const adapter = createKrxOpenApiMarketDataAdapter({
+    apiKey: 'test-auth-key',
+    source: 'krx-open-api-test',
+    endpoints: {
+      kospiDaily: 'https://krx.example.test/kospi',
+      kospi200Daily: 'https://krx.example.test/kospi200',
+      futures: 'https://krx.example.test/futures',
+      options: 'https://krx.example.test/options',
+      investorFlow: 'https://krx.example.test/flow',
+      holidayCalendar: 'https://krx.example.test/holiday',
+    },
+    commonParams: { reqType: 'json' },
+    endpointParams: { kospiDaily: { API_ID: 'kospi-daily-test' } },
+    capabilities: {
+      liveMarketData: true,
+      approvedPublic: true,
+      readinessAllowed: true,
+      sourceApproval: 'krx-open-api-test-approval',
+      license: 'krx-open-api-test-license',
+    },
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url);
+      fetchCalls.push({ url: parsed, options });
+      const key = `${parsed.origin}${parsed.pathname}`;
+      return {
+        ok: true,
+        text: async () => JSON.stringify(payloads[key]),
+      };
+    },
+  });
+
+  const snapshot = await adapter.getSnapshot();
+  assert.equal(snapshot.freshness, FRESHNESS.FRESH);
+  assert.equal(snapshot.capabilities.liveMarketData, true);
+  assert.equal(snapshot.capabilities.approvedPublic, true);
+  assert.equal(snapshot.capabilities.readinessAllowed, true);
+  assert.equal(snapshot.values.historicalMondayDownRate, 1);
+  assert.equal(snapshot.fields.kospiDaily.freshness, FRESHNESS.FRESH);
+  assert.equal(snapshot.fields.historicalMondayDownRate.freshness, FRESHNESS.FRESH);
+  assert.equal(snapshot.values.futuresBasis, 2.5);
+  assert.equal(snapshot.values.futuresOpenInterest, 1000);
+  assert.equal(snapshot.values.futuresVolume, 200);
+  assert.equal(snapshot.values.optionsOpenInterest, 3000);
+  assert.equal(snapshot.values.optionsVolume, 400);
+  assert.equal(snapshot.values.putCallRatio, 3);
+  assert.equal(snapshot.values.foreignerNetFutures, -42);
+  assert.deepEqual(snapshot.values.holidayCalendar, ['2026-06-03']);
+  assert.ok(fetchCalls.every((call) => call.options.headers.AUTH_KEY === 'test-auth-key'));
+  assert.ok(fetchCalls.some((call) => call.url.searchParams.get('API_ID') === 'kospi-daily-test'));
+
+  await withServer(createAppServer({ adapter }), async (baseUrl) => {
+    const dashboard = await (await fetch(`${baseUrl}/api/dashboard?force=true`)).json();
+    assert.equal(dashboard.probability.status, 'computed');
+    assert.equal(dashboard.derivativesMarket.coverage.available, 8);
+    assert.equal(dashboard.sourceStatus.liveData, false);
+    assert.equal(dashboard.sourceStatus.mode, 'external-source-unapproved');
+    assert.equal(dashboard.sourceStatus.approval, 'unapproved');
+    assert.equal(dashboard.productionReadiness.liveReady, false);
+    assert.equal(dashboard.productionReadiness.safeToServe, true);
+  });
+});
+
+test('KRX OPEN API adapter fails closed when configured endpoints cannot be polled', async () => {
+  const adapter = createKrxOpenApiMarketDataAdapter({
+    apiKey: 'test-auth-key',
+    source: 'krx-open-api-test',
+    endpoints: { kospiDaily: 'https://krx.example.test/kospi' },
+    fetchImpl: async () => {
+      throw new Error('provider SECRET_TOKEN=hidden');
+    },
+  });
+  const snapshot = await adapter.getSnapshot();
+  assert.equal(snapshot.freshness, FRESHNESS.ERROR);
+  assert.equal(snapshot.error, 'adapter_krx_open_api_failed');
+  assert.doesNotMatch(JSON.stringify(snapshot), /SECRET_TOKEN=hidden|provider SECRET_TOKEN/);
+  await withServer(createAppServer({ adapter }), async (baseUrl) => {
+    const dashboard = await (await fetch(`${baseUrl}/api/dashboard?force=true`)).json();
+    assert.equal(dashboard.sourceStatus.mode, 'source-error');
+    assert.equal(dashboard.productionReadiness.safeToServe, false);
+  });
+});
+
+test('environment factory selects KRX OPEN API adapter only when explicitly requested', () => {
+  const adapter = createAdapterFromEnv({
+    MARKET_DATA_ADAPTER: 'krx-open-api',
+    KRX_OPEN_API_KEY: 'test-auth-key',
+    KRX_OPEN_API_KOSPI_DAILY_URL: 'https://krx.example.test/kospi',
+    KRX_OPEN_API_KOSPI_DAILY_PARAMS_JSON: '{"API_ID":"kospi-daily-test"}',
+    KRX_OPEN_API_LIVE: 'true',
+    KRX_OPEN_API_APPROVED_PUBLIC: 'true',
+    KRX_OPEN_API_READINESS_ALLOWED: 'true',
+    KRX_OPEN_API_SOURCE_APPROVAL: 'krx-open-api-test-approval',
+    KRX_OPEN_API_LICENSE: 'krx-open-api-test-license',
+  });
+  assert.equal(adapter.source, 'krx-open-api');
 });
 
 test('JSON HTTP adapter maps normalized payload through the strict source boundary', async () => {
