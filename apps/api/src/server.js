@@ -135,7 +135,10 @@ export function createAppServer({ adapter = createAdapterFromEnv(), pollingConfi
 if (import.meta.url === `file://${process.argv[1]}`) {
   loadEnvFile();
   const port = Number(process.env.PORT ?? 4173);
-  createAppServer().listen(port, () => {
+  // Server snapshot cache/poll cadence; clamped by normalizePollingConfig to [30s, 30m].
+  // The client UI auto-syncs its refresh interval to this advertised value.
+  const pollingConfig = process.env.POLLING_INTERVAL_MS ? { intervalMs: Number(process.env.POLLING_INTERVAL_MS) } : {};
+  createAppServer({ pollingConfig }).listen(port, () => {
     console.log(`KOSPI dashboard local server listening on http://localhost:${port}`);
   });
 }
