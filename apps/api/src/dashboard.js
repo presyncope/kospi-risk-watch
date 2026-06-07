@@ -238,6 +238,7 @@ export function buildDashboardState(snapshot, { asOf = new Date(), service = {} 
     usEquityChangePct: snapshot.values?.usEquityChangePct ?? null,
     provenance: snapshot.fields ?? {},
   });
+  probability.backtest = snapshot.values?.probabilityBacktest ?? null;
   const derivativesMarket = buildDerivativesMarketContext({ snapshot, expirySettlement });
   const sourceStatus = buildSourceStatus(snapshot);
   const marketPulse = buildMarketPulseContext(snapshot, { asOf });
