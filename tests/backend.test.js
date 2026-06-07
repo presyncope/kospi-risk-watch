@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { createAppServer } from '../apps/api/src/server.js';
 import { loadEnvFile, parseEnvFileContent } from '../apps/api/src/env.js';
 import { FRESHNESS } from '../packages/core/src/index.js';
-import { createAdapterFromEnv, createCompositeMarketDataAdapter, createFredMacroProvider, createJsonHttpMarketDataAdapter, createKrxOpenApiMarketDataAdapter, createMockMarketDataAdapter, createUnavailableAdapter, createYahooFinanceMarketDataAdapter, normalizeAdapterResult } from '../packages/data-adapters/src/index.js';
+import { createAdapterFromEnv, createCompositeMarketDataAdapter, createFredMacroProvider, createJsonHttpMarketDataAdapter, createKisFuturesProvider, createKrxOpenApiMarketDataAdapter, createMockMarketDataAdapter, createUnavailableAdapter, createYahooFinanceMarketDataAdapter, normalizeAdapterResult } from '../packages/data-adapters/src/index.js';
 
 async function withServer(server, fn) {
   await new Promise((resolve) => server.listen(0, resolve));
@@ -561,6 +561,83 @@ test('Yahoo Finance proxy adapter exposes intraday market pulse without live-rea
     assert.equal(dashboard.sourceStatus.mode, 'external-source-unapproved');
     assert.equal(dashboard.productionReadiness.liveReady, false);
     assert.equal(dashboard.productionReadiness.safeToServe, true);
+  });
+});
+
+test('KIS futures provider builds a futures instrument from token + minute candles', async () => {
+  const fetchImpl = async (url) => {
+    if (url.includes('/oauth2/tokenP')) {
+      return { ok: true, text: async () => JSON.stringify({ access_token: 'tok', token_type: 'Bearer', expires_in: 86400 }) };
+    }
+    if (url.includes('inquire-time-fuopchartprice')) {
+      return { ok: true, text: async () => JSON.stringify({ output2: [
+        { stck_bsop_date: '20260605', stck_cntg_hour: '090000', futs_prpr: '350.10', cntg_vol: '120' },
+        { stck_bsop_date: '20260605', stck_cntg_hour: '090100', futs_prpr: '350.40', cntg_vol: '90' },
+        { stck_bsop_date: '20260605', stck_cntg_hour: '090200', futs_prpr: '350.25', cntg_vol: '80' },
+      ] }) };
+    }
+    if (url.includes('inquire-price')) {
+      return { ok: true, text: async () => JSON.stringify({ output: { futs_prpr: '350.25', futs_prdy_clpr: '352.00' } }) };
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const provider = createKisFuturesProvider({ appKey: 'k', appSecret: 's', futuresCode: '101W09', fetchImpl });
+  const result = await provider();
+  const futures = result.marketPulseInstruments[0];
+  assert.equal(futures.key, 'kospi200Futures');
+  assert.equal(futures.last, 350.25);
+  assert.equal(futures.previousClose, 352);
+  assert.equal(futures.bars.length, 3);
+  assert.ok(futures.bars.every((bar) => bar.time.endsWith('Z') && Number.isFinite(bar.close)));
+  assert.equal(futures.bars[0].time, '2026-06-05T00:00:00.000Z'); // KST 09:00 -> UTC 00:00
+  assert.equal(result.fields.kisFutures.source, 'kis');
+});
+
+test('composite injects a futures series so the dashboard charts futures and the real basis', async () => {
+  const observedAt = '2026-06-05T06:00:00Z';
+  const base = {
+    source: 'spot-base',
+    async getSnapshot() {
+      return normalizeAdapterResult({
+        source: this.source,
+        observedAt,
+        freshness: FRESHNESS.FRESH,
+        fields: {
+          kospiDaily: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
+          historicalMondayDownRate: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
+        },
+        values: {
+          historicalMondayDownRate: 0.5,
+          marketPulse: {
+            status: FRESHNESS.FRESH,
+            source: this.source,
+            primaryKey: 'kospi200',
+            instruments: [
+              {
+                key: 'kospi200', label: 'KOSPI200 지수', symbol: '^KS200', last: 350, previousClose: 351, changePct: -0.28,
+                bars: [{ time: '2026-06-05T05:59:00Z', close: 349.8 }, { time: '2026-06-05T06:00:00Z', close: 350 }],
+              },
+            ],
+          },
+        },
+      });
+    },
+  };
+  const futuresProvider = async () => ({
+    marketPulseInstruments: [{
+      key: 'kospi200Futures', label: 'KOSPI200 선물', symbol: '101W09', role: 'futures', last: 350.6, previousClose: 351.5, changePct: -0.26,
+      bars: [{ time: '2026-06-05T05:59:00Z', close: 350.4 }, { time: '2026-06-05T06:00:00Z', close: 350.6 }],
+    }],
+    values: {},
+    fields: { kisFutures: { source: 'kis', freshness: FRESHNESS.FRESH } },
+  });
+  const composite = createCompositeMarketDataAdapter({ base, providers: [futuresProvider] });
+  await withServer(createAppServer({ adapter: composite }), async (baseUrl) => {
+    const dashboard = await (await fetch(`${baseUrl}/api/dashboard?force=true`)).json();
+    assert.equal(dashboard.marketPulse.primaryKey, 'kospi200Futures');
+    assert.equal(dashboard.marketPulse.isFuturesPrimary, true);
+    assert.equal(dashboard.marketPulse.futuresBasis, 0.6);
+    assert.ok(dashboard.marketPulse.instruments.some((instrument) => instrument.key === 'kospi200Futures'));
   });
 });
 

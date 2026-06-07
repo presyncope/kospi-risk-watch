@@ -105,8 +105,16 @@ function buildMarketPulseContext(snapshot = {}, { asOf = null } = {}) {
   const hasFutures = instruments.some((item) => item.key === 'kospi200Futures');
   const primaryKey = hasFutures ? 'kospi200Futures' : (pulse.primaryKey ?? null);
   const primaryInstrument = instruments.find((item) => item.key === primaryKey) ?? instruments[0];
-  const futuresBasis = Number.isFinite(snapshot.values?.futuresBasis) ? snapshot.values.futuresBasis : null;
-  const impliedFuturesLevel = futuresBasis != null && Number.isFinite(primaryInstrument?.last)
+  const futuresInstrument = instruments.find((item) => item.key === 'kospi200Futures');
+  const spotInstrument = instruments.find((item) => item.key === 'kospi200');
+  // Prefer the real basis (futures − spot) when a futures series is present;
+  // else fall back to an adapter-provided basis value (e.g. KRX over spot).
+  let futuresBasis = Number.isFinite(snapshot.values?.futuresBasis) ? snapshot.values.futuresBasis : null;
+  if (Number.isFinite(futuresInstrument?.last) && Number.isFinite(spotInstrument?.last)) {
+    futuresBasis = Number((futuresInstrument.last - spotInstrument.last).toFixed(2));
+  }
+  // Implied level only matters when there is no real futures series (basis over spot).
+  const impliedFuturesLevel = !hasFutures && futuresBasis != null && Number.isFinite(primaryInstrument?.last)
     ? Number((primaryInstrument.last + futuresBasis).toFixed(2))
     : null;
   const caveatParts = ['Yahoo/yfinance 경로는 KOSPI200 선물이 아니라 지수 프록시입니다. liveReady 판단에는 사용하지 않습니다.'];

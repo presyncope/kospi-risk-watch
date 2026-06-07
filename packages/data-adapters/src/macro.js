@@ -177,6 +177,12 @@ export function createCompositeMarketDataAdapter({ base, providers = [], source 
           if (value != null) fields[key] = value;
         }
       }
+      // A provider may contribute extra market-pulse instruments (e.g. a KIS futures
+      // series). Append them onto the base market pulse so the chart can prefer them.
+      const extraInstruments = macros.flatMap((macro) => (Array.isArray(macro?.marketPulseInstruments) ? macro.marketPulseInstruments : []));
+      if (extraInstruments.length && values.marketPulse && Array.isArray(values.marketPulse.instruments)) {
+        values.marketPulse = { ...values.marketPulse, instruments: [...values.marketPulse.instruments, ...extraInstruments] };
+      }
       // Polling boundary re-normalizes, dropping any value/field not in the schema/field set.
       return { ...snapshot, values, fields };
     },
