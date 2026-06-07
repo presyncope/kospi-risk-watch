@@ -1,4 +1,4 @@
-import { FRESHNESS, buildDerivativesMarketContext, buildExpirySettlementRisk, buildProductionReadinessAssessment, buildQuantReadinessAssessment, buildRiskAlerts, computeDownsideProbability, createProvenance, evaluateLiveSourceApproval, normalizeHolidaySet, summarizeFreshness } from '../../../packages/core/src/index.js';
+import { FRESHNESS, buildDerivativesMarketContext, buildExpirySettlementRisk, buildInverseSignal, buildProductionReadinessAssessment, buildQuantReadinessAssessment, buildRiskAlerts, computeDownsideProbability, createProvenance, evaluateLiveSourceApproval, normalizeHolidaySet, summarizeFreshness } from '../../../packages/core/src/index.js';
 
 export function summarizeSnapshotFreshness(snapshot = {}) {
   const fields = { ...(snapshot.fields ?? {}) };
@@ -65,7 +65,23 @@ function displayNumber(value, suffix = '') {
   return `${value.toLocaleString('en-US', { maximumFractionDigits: 2 })}${suffix}`;
 }
 
-function buildMarketPulseContext(snapshot = {}) {
+function dateKey(value) {
+  if (value == null) return null;
+  const parsed = typeof value === 'string' ? Date.parse(value) : value?.getTime?.();
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : null;
+}
+
+// Defensive plausibility check: the KOSPI/KOSPI200 level ratio is normally ~6.5–8.
+// If a proxy returns an implausible ratio we flag it instead of trusting it silently.
+function marketDataQuality(pulse) {
+  const kospi = pulse.instruments?.find((item) => item.key === 'kospi')?.last;
+  const kospi200 = pulse.instruments?.find((item) => item.key === 'kospi200')?.last;
+  if (!Number.isFinite(kospi) || !Number.isFinite(kospi200) || kospi200 === 0) return 'unknown';
+  const ratio = kospi / kospi200;
+  return ratio >= 5 && ratio <= 9 ? 'ok' : 'check';
+}
+
+function buildMarketPulseContext(snapshot = {}, { asOf = null } = {}) {
   const pulse = snapshot.values?.marketPulse;
   if (!pulse) {
     return {
@@ -75,9 +91,18 @@ function buildMarketPulseContext(snapshot = {}) {
       observedAt: null,
       primaryKey: null,
       instruments: [],
+      closed: false,
+      marketDateLabel: null,
+      dataQuality: 'unknown',
       caveat: 'KRX 선물/OI/숏 관련 데이터가 아니라, 별도 설정된 공개 프록시 차트만 표시합니다.',
     };
   }
+  const observedKey = dateKey(pulse.observedAt);
+  const closed = Boolean(observedKey && dateKey(asOf) && observedKey !== dateKey(asOf));
+  const dataQuality = marketDataQuality(pulse);
+  const caveatParts = ['Yahoo/yfinance 경로는 KOSPI200 선물이 아니라 지수 프록시입니다. liveReady 판단에는 사용하지 않습니다.'];
+  if (closed) caveatParts.push(`표시값은 ${observedKey} 최근 장 마감 기준이며, 개장 후 갱신이 필요합니다.`);
+  if (dataQuality === 'check') caveatParts.push('지수 레벨 비율이 비정상이라 데이터 점검이 필요합니다.');
   return {
     status: pulse.status ?? 'unavailable',
     source: pulse.source ?? snapshot.source ?? 'unknown',
@@ -85,7 +110,10 @@ function buildMarketPulseContext(snapshot = {}) {
     observedAt: pulse.observedAt ?? null,
     primaryKey: pulse.primaryKey ?? null,
     instruments: pulse.instruments ?? [],
-    caveat: 'Yahoo/yfinance 경로는 KOSPI200 선물이 아니라 지수 프록시입니다. liveReady 판단에는 사용하지 않습니다.',
+    closed,
+    marketDateLabel: closed ? observedKey : null,
+    dataQuality,
+    caveat: caveatParts.join(' '),
   };
 }
 
@@ -135,10 +163,10 @@ function buildDownsideInputEvidence({ snapshot = {}, probability = {}, expirySet
     },
     {
       key: 'kospiIntraday',
-      label: 'KOSPI 당일 변동',
+      label: marketPulse.closed ? `KOSPI 변동 (${marketPulse.marketDateLabel} 마감)` : 'KOSPI 당일 변동',
       value: displayPercent(kospi?.changePct, { signed: true }),
       status: provenanceStatus(snapshot, 'kospiIntraday'),
-      role: '현재 시장 방향 확인',
+      role: marketPulse.closed ? '최근 장 마감 기준 (실시간 아님)' : '현재 시장 방향 확인',
       detail: kospi ? `${kospi.symbol} · 5분 ${displayPercent(kospi.momentum5mPct, { signed: true })} · 20분 ${displayPercent(kospi.momentum20mPct, { signed: true })}` : '1분봉 프록시가 없습니다.',
     },
     {
@@ -166,10 +194,23 @@ export function buildDashboardState(snapshot, { asOf = new Date(), service = {} 
     provenance: snapshot.fields ?? {},
   });
   const derivativesMarket = buildDerivativesMarketContext({ snapshot, expirySettlement });
-  const alerts = buildRiskAlerts({ probabilityResult: probability, expiryRisk: expirySettlement });
   const sourceStatus = buildSourceStatus(snapshot);
-  const marketPulse = buildMarketPulseContext(snapshot);
+  const marketPulse = buildMarketPulseContext(snapshot, { asOf });
   const downsideInputs = buildDownsideInputEvidence({ snapshot, probability, expirySettlement, marketPulse });
+  const inverseSignal = buildInverseSignal({
+    probability,
+    marketPulse,
+    expirySettlement,
+    volatilityZScore: snapshot.values?.volatilityZScore ?? null,
+    lastDailyChangePct: snapshot.values?.lastDailyChangePct ?? null,
+    asOf,
+  });
+  const alerts = buildRiskAlerts({
+    probabilityResult: probability,
+    expiryRisk: expirySettlement,
+    inverseSignal,
+    volatilityZScore: snapshot.values?.volatilityZScore ?? null,
+  });
   const quantReadiness = buildQuantReadinessAssessment({
     snapshot,
     sourceStatus,
@@ -192,6 +233,7 @@ export function buildDashboardState(snapshot, { asOf = new Date(), service = {} 
     sourceFreshnessSummary,
     marketPulse,
     downsideInputs,
+    inverseSignal,
     probability,
     expirySettlement,
     derivativesMarket,

@@ -1,6 +1,6 @@
 # KOSPI Risk Watch
 
-Public personal MVP for monitoring KOSPI Monday downside context and KOSPI200 expiry-settlement risk. It is an observation-only dashboard: no automated trading, no order routing, no position sizing, and no investment advice.
+Personal MVP that helps a single individual investor decide whether to enter/exit a KOSPI200 inverse position, by monitoring Monday downside context, an inverse-signal score, regime/volatility, and KOSPI200 expiry-settlement risk. It is decision-support only: it computes an illustrative signal strength, entry/exit guidance, and a volatility-weighted example sizing, but it does **not** execute automated trading or route orders. The final decision and responsibility rest with the user.
 
 ## Scope
 

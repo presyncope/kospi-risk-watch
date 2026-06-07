@@ -4,10 +4,12 @@ import {
   ALERT_SEVERITY,
   DERIVATIVES_MARKET_STATUS,
   FRESHNESS,
+  INVERSE_STANCES,
   PROBABILITY_STATUS,
   PRODUCTION_READINESS_STATUS,
   buildDerivativesMarketContext,
   buildExpirySettlementRisk,
+  buildInverseSignal,
   buildProductionReadinessAssessment,
   buildQuantReadinessAssessment,
   buildRiskAlerts,
@@ -704,4 +706,81 @@ test('production readiness treats private host-shaped diagnostics as unsafe', ()
   });
   assert.equal(result.status, PRODUCTION_READINESS_STATUS.BLOCKED);
   assert.equal(result.safeToServe, false);
+});
+
+function strongDownsideContext() {
+  return {
+    probability: { status: PROBABILITY_STATUS.COMPUTED, probability: 80, confidence: 'medium' },
+    marketPulse: {
+      observedAt: '2026-06-08T06:00:00Z',
+      instruments: [
+        { key: 'kospi', changePct: -4.5 },
+        { key: 'kospi200', changePct: -5.0 },
+      ],
+    },
+    expirySettlement: { riskLevel: 'elevated' },
+    volatilityZScore: 1.8,
+    lastDailyChangePct: -2.4,
+    asOf: new Date('2026-06-08T06:30:00Z'),
+  };
+}
+
+test('inverse signal escalates to entry stance and explains its contributions on strong downside', () => {
+  const signal = buildInverseSignal(strongDownsideContext());
+  assert.equal(signal.status, 'computed');
+  assert.equal(signal.stance, INVERSE_STANCES.ENTER);
+  assert.equal(signal.stanceStatus, 'signal-strong');
+  assert.ok(signal.signalStrength >= 70);
+  assert.ok(signal.contributions.some((item) => item.input === 'intradayMomentum' && item.points > 0));
+  assert.ok(signal.contributions.some((item) => item.input === 'volatilityZScore' && item.points > 0));
+  assert.ok(signal.positionSizingHint.suggestedPctOfRiskBudget > 0);
+});
+
+test('inverse signal sizing is inverse-weighted by volatility', () => {
+  const base = strongDownsideContext();
+  const calm = buildInverseSignal({ ...base, volatilityZScore: 0.4 });
+  const wild = buildInverseSignal({ ...base, volatilityZScore: 3 });
+  assert.ok(calm.positionSizingHint.suggestedPctOfRiskBudget > wild.positionSizingHint.suggestedPctOfRiskBudget);
+});
+
+test('inverse signal turns to reduce/close and zero sizing when downside is weak', () => {
+  const signal = buildInverseSignal({
+    probability: { status: PROBABILITY_STATUS.COMPUTED, probability: 22, confidence: 'medium' },
+    marketPulse: { observedAt: '2026-06-08T06:00:00Z', instruments: [{ key: 'kospi', changePct: 1.2 }] },
+    expirySettlement: { riskLevel: 'normal' },
+    volatilityZScore: 0.2,
+    lastDailyChangePct: 0.8,
+    asOf: new Date('2026-06-08T06:30:00Z'),
+  });
+  assert.equal(signal.stance, INVERSE_STANCES.REDUCE);
+  assert.equal(signal.positionSizingHint.suggestedPctOfRiskBudget, 0);
+});
+
+test('inverse signal is unavailable and lowers confidence on closed-market data', () => {
+  const unavailable = buildInverseSignal({ probability: { status: PROBABILITY_STATUS.UNAVAILABLE, probability: null } });
+  assert.equal(unavailable.status, 'unavailable');
+  assert.equal(unavailable.stance, INVERSE_STANCES.UNAVAILABLE);
+
+  const closed = buildInverseSignal({
+    ...strongDownsideContext(),
+    asOf: new Date('2026-06-10T06:30:00Z'),
+  });
+  assert.equal(closed.confidence, 'low');
+  assert.match(closed.caveat, /장 마감/);
+});
+
+test('risk alerts fire for inverse entry, intraday drop, volatility, and expiry', () => {
+  const inverseSignal = buildInverseSignal(strongDownsideContext());
+  const alerts = buildRiskAlerts({
+    probabilityResult: { status: PROBABILITY_STATUS.COMPUTED, probability: 70, sourceFreshnessSummary: { overall: FRESHNESS.FRESH } },
+    expiryRisk: { riskLevel: 'elevated' },
+    inverseSignal,
+    volatilityZScore: 1.8,
+  });
+  const kinds = alerts.map((alert) => alert.kind);
+  assert.ok(kinds.includes('inverse-entry'));
+  assert.ok(kinds.includes('market-drop'));
+  assert.ok(kinds.includes('volatility'));
+  assert.ok(kinds.includes('expiry-settlement'));
+  assert.ok(alerts.find((alert) => alert.kind === 'inverse-entry').severity === ALERT_SEVERITY.HIGH);
 });
