@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createAppServer } from '../apps/api/src/server.js';
 import { createMockMarketDataAdapter } from '../packages/data-adapters/src/index.js';
-import { NON_ADVICE_NOTICE } from '../packages/core/src/index.js';
 
 async function withServer(server, fn) {
   await new Promise((resolve) => server.listen(0, resolve));
@@ -22,11 +21,13 @@ test('dashboard HTML exposes required MVP panels and guardrails', async () => {
     'polling-interval',
     'refresh',
     'polling-state',
+    'probability-gauge',
     'probability-value',
     'probability-status',
     'probability-meta',
     'probability-contributions',
     'quant-readiness',
+    'quant-readiness-gauge',
     'quant-readiness-score',
     'quant-readiness-verdict',
     'quant-readiness-summary',
@@ -34,6 +35,7 @@ test('dashboard HTML exposes required MVP panels and guardrails', async () => {
     'quant-readiness-checks',
     'quant-readiness-blockers',
     'production-readiness',
+    'production-readiness-gauge',
     'production-readiness-score',
     'production-readiness-status',
     'production-readiness-summary',
@@ -50,18 +52,20 @@ test('dashboard HTML exposes required MVP panels and guardrails', async () => {
   ]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
-  assert.ok(html.includes(NON_ADVICE_NOTICE));
-  assert.match(html, /automated trading/);
-  assert.match(html, /KOSPI200 expiry-settlement/);
-  assert.match(html, /Senior quant assessment/);
-  assert.match(html, /Production readiness/);
-  assert.match(html, /Derivatives market coverage/);
+  assert.match(html, /<html lang="ko">/);
+  assert.match(html, /투자 조언/);
+  assert.match(html, /자동매매/);
+  assert.match(html, /KOSPI200 만기/);
+  assert.match(html, /시니어 퀀트 평가/);
+  assert.match(html, /운영 게시 준비도/);
+  assert.match(html, /파생상품 지표 커버리지/);
+  assert.match(html, /class="gauge/);
 });
 
 test('dashboard HTML only contains observation controls, not execution controls', async () => {
   const html = await readFile('apps/web/index.html', 'utf8');
   const buttonLabels = [...html.matchAll(/<button[^>]*>([^<]+)<\/button>/g)].map((match) => match[1].trim());
-  assert.deepEqual(buttonLabels, ['Refresh now']);
+  assert.deepEqual(buttonLabels, ['지금 새로고침']);
   assert.doesNotMatch(html, /<form\b/i);
   assert.doesNotMatch(html, /type="submit"/i);
   assert.doesNotMatch(html, /data-order/i);

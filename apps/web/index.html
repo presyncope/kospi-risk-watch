@@ -1,86 +1,115 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>KOSPI Monday Risk Dashboard</title>
+    <title>코스피 리스크 관찰 대시보드</title>
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
   <body>
     <main class="shell">
       <header class="hero">
-        <p class="eyebrow">Public personal MVP</p>
-        <h1>KOSPI Monday downside + KOSPI200 expiry-settlement monitor</h1>
-        <p id="non-advice" class="notice">Observation-only risk monitoring. This dashboard does not provide investment advice, buy/sell recommendations, position sizing, or automated trading.</p>
+        <p class="eyebrow">공개 관찰용 MVP</p>
+        <h1>코스피 월요일 하락 확률 · KOSPI200 만기/결제 리스크 관찰</h1>
+        <p id="non-advice" class="notice">관찰 전용 리스크 모니터입니다. 이 대시보드는 투자 조언, 거래 유도, 투자 행동 안내, 자동매매를 제공하지 않습니다.</p>
+        <div class="hero-summary" aria-label="핵심 안전 상태">
+          <span class="hero-badge">관찰 전용</span>
+          <span class="hero-badge hero-badge-warn">라이브 준비는 별도 검증</span>
+          <span class="hero-badge">승인 데이터만 liveReady 허용</span>
+        </div>
       </header>
 
-      <section class="toolbar" aria-label="Polling controls">
+      <section class="toolbar" aria-label="폴링 제어">
         <div>
-          <label for="polling-interval">Polling interval</label>
+          <label for="polling-interval">화면 갱신 주기</label>
           <select id="polling-interval">
-            <option value="30000">30 seconds</option>
-            <option value="60000">1 minute</option>
-            <option value="300000" selected>5 minutes</option>
-            <option value="900000">15 minutes</option>
-            <option value="1800000">30 minutes</option>
+            <option value="30000">30초</option>
+            <option value="60000">1분</option>
+            <option value="300000" selected>5분</option>
+            <option value="900000">15분</option>
+            <option value="1800000">30분</option>
           </select>
         </div>
-        <button id="refresh" type="button">Refresh now</button>
-        <span id="polling-state" class="pill">Loading polling state…</span>
+        <button id="refresh" type="button">지금 새로고침</button>
+        <span id="polling-state" class="pill">폴링 상태 확인 중…</span>
       </section>
 
-      <section class="grid" aria-label="Dashboard panels">
-        <article class="card probability-card" aria-labelledby="probability-title">
-          <p class="card-kicker">Monday downside probability</p>
-          <h2 id="probability-title"><span id="probability-value">—</span></h2>
-          <p id="probability-status" class="status">Waiting for data…</p>
-          <dl id="probability-meta" class="meta"></dl>
+      <section class="grid" aria-label="대시보드 패널">
+        <article class="card probability-card primary-card" aria-labelledby="probability-title">
+          <p class="card-kicker">월요일 하락 확률</p>
+          <div class="score-panel">
+            <div id="probability-gauge" class="gauge" style="--value: 0" role="img" aria-label="월요일 하락 확률 대기 중">
+              <span id="probability-value">—</span>
+              <small>확률</small>
+            </div>
+            <div class="score-copy">
+              <h2 id="probability-title">하락 확률 모니터</h2>
+              <p id="probability-status" class="status">데이터 대기 중…</p>
+              <dl id="probability-meta" class="meta"></dl>
+            </div>
+          </div>
           <ul id="probability-contributions" class="contributions"></ul>
         </article>
 
-        <article id="quant-readiness" class="card" aria-labelledby="quant-readiness-title">
-          <p class="card-kicker">Senior quant assessment</p>
-          <h2 id="quant-readiness-title"><span id="quant-readiness-score">—</span></h2>
-          <p id="quant-readiness-verdict" class="status">Waiting for readiness score…</p>
-          <p id="quant-readiness-summary" class="muted"></p>
+        <article id="quant-readiness" class="card primary-card" aria-labelledby="quant-readiness-title">
+          <p class="card-kicker">시니어 퀀트 평가</p>
+          <div class="score-panel score-panel-small">
+            <div id="quant-readiness-gauge" class="gauge gauge-small" style="--value: 0" role="img" aria-label="퀀트 준비도 대기 중">
+              <span id="quant-readiness-score">—</span>
+              <small>준비도</small>
+            </div>
+            <div class="score-copy">
+              <h2 id="quant-readiness-title">퀀트 준비도</h2>
+              <p id="quant-readiness-verdict" class="status">준비도 점수 대기 중…</p>
+              <p id="quant-readiness-summary" class="muted"></p>
+            </div>
+          </div>
           <dl id="quant-readiness-meta" class="meta"></dl>
           <div id="quant-readiness-checks" class="readiness-checks"></div>
           <ul id="quant-readiness-blockers" class="contributions"></ul>
         </article>
 
-        <article id="production-readiness" class="card" aria-labelledby="production-readiness-title">
-          <p class="card-kicker">Production readiness</p>
-          <h2 id="production-readiness-title"><span id="production-readiness-score">—</span></h2>
-          <p id="production-readiness-status" class="status">Waiting for production checks…</p>
-          <p id="production-readiness-summary" class="muted"></p>
+        <article id="production-readiness" class="card primary-card" aria-labelledby="production-readiness-title">
+          <p class="card-kicker">운영 게시 준비도</p>
+          <div class="score-panel score-panel-small">
+            <div id="production-readiness-gauge" class="gauge gauge-small" style="--value: 0" role="img" aria-label="운영 게시 준비도 대기 중">
+              <span id="production-readiness-score">—</span>
+              <small>게시</small>
+            </div>
+            <div class="score-copy">
+              <h2 id="production-readiness-title">공개 게시 안전성</h2>
+              <p id="production-readiness-status" class="status">운영 점검 대기 중…</p>
+              <p id="production-readiness-summary" class="muted"></p>
+            </div>
+          </div>
           <dl id="production-readiness-meta" class="meta"></dl>
           <div id="production-readiness-checks" class="readiness-checks"></div>
           <ul id="production-readiness-blockers" class="contributions"></ul>
         </article>
 
         <article class="card" aria-labelledby="expiry-title">
-          <p class="card-kicker">KOSPI200 expiry-settlement</p>
-          <h2 id="expiry-title">Current window</h2>
+          <p class="card-kicker">KOSPI200 만기·결제</p>
+          <h2 id="expiry-title">현재 만기 구간</h2>
           <dl id="expiry-meta" class="meta"></dl>
         </article>
 
         <article id="derivatives-market" class="card" aria-labelledby="derivatives-market-title">
-          <p class="card-kicker">Derivatives market coverage</p>
-          <h2 id="derivatives-market-title">Major signal availability</h2>
+          <p class="card-kicker">파생상품 지표 커버리지</p>
+          <h2 id="derivatives-market-title">주요 신호 사용 가능성</h2>
           <p id="derivatives-market-summary" class="muted"></p>
           <div id="derivatives-market-list" class="metric-list"></div>
         </article>
 
         <article class="card" aria-labelledby="freshness-title">
-          <p class="card-kicker">Data quality</p>
-          <h2 id="freshness-title">Source freshness</h2>
+          <p class="card-kicker">데이터 품질</p>
+          <h2 id="freshness-title">소스 신선도</h2>
           <div id="source-status" class="source-status"></div>
           <div id="freshness-list" class="freshness-list"></div>
         </article>
 
         <article class="card alerts-card" aria-labelledby="alerts-title">
-          <p class="card-kicker">Informational alerts</p>
-          <h2 id="alerts-title">Risk context</h2>
+          <p class="card-kicker">정보성 알림</p>
+          <h2 id="alerts-title">리스크 맥락</h2>
           <div id="alerts-list" class="alerts-list"></div>
         </article>
       </section>

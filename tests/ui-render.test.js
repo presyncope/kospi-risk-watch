@@ -11,6 +11,15 @@ class FakeElement {
     this.value = '';
     this.attributes = new Map();
     this._textContent = '';
+    this.style = {
+      properties: new Map(),
+      setProperty(name, value) {
+        this.properties.set(name, String(value));
+      },
+      getPropertyValue(name) {
+        return this.properties.get(name) ?? '';
+      },
+    };
   }
 
   set textContent(value) {
@@ -34,6 +43,15 @@ class FakeElement {
   addEventListener(type, handler) {
     if (!this.listeners.has(type)) this.listeners.set(type, []);
     this.listeners.get(type).push(handler);
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+    if (name === 'id') this.id = String(value);
+  }
+
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
   }
 
   async trigger(type) {
@@ -63,16 +81,19 @@ function installFakeDocument() {
     'polling-interval',
     'refresh',
     'polling-state',
+    'probability-gauge',
     'probability-value',
     'probability-status',
     'probability-meta',
     'probability-contributions',
+    'quant-readiness-gauge',
     'quant-readiness-score',
     'quant-readiness-verdict',
     'quant-readiness-summary',
     'quant-readiness-meta',
     'quant-readiness-checks',
     'quant-readiness-blockers',
+    'production-readiness-gauge',
     'production-readiness-score',
     'production-readiness-status',
     'production-readiness-summary',
@@ -246,28 +267,36 @@ test('UI module renders dashboard state and polling control with mocked APIs', a
     await import(moduleUrl);
 
     assert.equal(elements.get('#polling-interval').value, '60000');
-    assert.match(elements.get('#polling-state').textContent, /Active · 60s interval/);
+    assert.match(elements.get('#polling-state').textContent, /활성 · 1분 주기/);
     assert.equal(elements.get('#probability-value').textContent, '~62%');
+    assert.equal(elements.get('#probability-gauge').style.getPropertyValue('--value'), '62');
+    assert.match(elements.get('#probability-gauge').getAttribute('aria-label'), /월요일 하락 확률/);
     assert.match(elements.get('#probability-status').className, /status-degraded/);
-    assert.match(elements.get('#probability-meta').textContent, /fixture degraded display check/);
-    assert.match(elements.get('#source-status').textContent, /Mock fixture/);
-    assert.match(elements.get('#source-status').textContent, /not live data/);
-    assert.match(elements.get('#source-status').textContent, /Deterministic mock data/);
-    assert.match(elements.get('#probability-contributions').textContent, /historicalMondayDownRate/);
+    assert.match(elements.get('#probability-status').textContent, /데이터 제한/);
+    assert.match(elements.get('#probability-meta').textContent, /목업 기반 제한 표시 점검/);
+    assert.match(elements.get('#source-status').textContent, /목업 고정값/);
+    assert.match(elements.get('#source-status').textContent, /라이브 데이터 아님/);
+    assert.match(elements.get('#source-status').textContent, /로컬 개발과 테스트용/);
+    assert.match(elements.get('#probability-contributions').textContent, /월요일 하락 기준율/);
     assert.equal(elements.get('#quant-readiness-score').textContent, '70/100');
+    assert.equal(elements.get('#quant-readiness-gauge').style.getPropertyValue('--value'), '70');
     assert.match(elements.get('#quant-readiness-verdict').className, /status-analysis-review-ready/);
-    assert.match(elements.get('#quant-readiness-blockers').textContent, /approved free/);
-    assert.match(elements.get('#quant-readiness-checks').textContent, /Probability is computed/);
+    assert.match(elements.get('#quant-readiness-verdict').textContent, /분석 검토 가능/);
+    assert.match(elements.get('#quant-readiness-blockers').textContent, /승인된 무료/);
+    assert.match(elements.get('#quant-readiness-checks').textContent, /확률이 계산되었습니다/);
     assert.equal(elements.get('#production-readiness-score').textContent, '55/100');
+    assert.equal(elements.get('#production-readiness-gauge').style.getPropertyValue('--value'), '55');
     assert.match(elements.get('#production-readiness-status').className, /status-production-safe-observation/);
-    assert.match(elements.get('#production-readiness-blockers').textContent, /source registry/);
-    assert.match(elements.get('#production-readiness-checks').textContent, /Service health/);
+    assert.match(elements.get('#production-readiness-status').textContent, /공개 관찰 안전/);
+    assert.match(elements.get('#production-readiness-blockers').textContent, /소스 레지스트리/);
+    assert.match(elements.get('#production-readiness-checks').textContent, /서비스 상태/);
     assert.match(elements.get('#expiry-meta').textContent, /2026-06-11/);
-    assert.match(elements.get('#derivatives-market-summary').textContent, /2\/8 derivatives/);
-    assert.match(elements.get('#derivatives-market-list').textContent, /Futures basis/);
-    assert.match(elements.get('#derivatives-market-list').textContent, /not live market data/);
+    assert.match(elements.get('#derivatives-market-summary').textContent, /2\/8/);
+    assert.match(elements.get('#derivatives-market-summary').textContent, /파생상품 지표/);
+    assert.match(elements.get('#derivatives-market-list').textContent, /선물 베이시스/);
+    assert.match(elements.get('#derivatives-market-list').textContent, /라이브 시장 데이터가 아닙니다/);
     assert.equal(elements.get('#freshness-list').children.length, 2);
-    assert.match(elements.get('#alerts-list').textContent, /Monitoring threshold crossed/);
+    assert.match(elements.get('#alerts-list').textContent, /모니터링 임계값/);
     assert.ok(timers.scheduled.some((timer) => timer.delay === 60_000 && timer.unrefCalled));
 
     elements.get('#polling-interval').value = '300000';
@@ -311,8 +340,8 @@ test('UI module renders source error in data-quality panel', async () => {
 
   assert.match(elements.get('#source-status').className, /status-error/);
   assert.match(elements.get('#source-status').textContent, /adapter_polling_failed/);
-  assert.match(elements.get('#freshness-list').textContent, /adapter/);
-  assert.match(elements.get('#freshness-list').textContent, /error/);
+  assert.match(elements.get('#freshness-list').textContent, /어댑터/);
+  assert.match(elements.get('#freshness-list').textContent, /오류/);
 });
 
 
@@ -327,11 +356,11 @@ test('UI module renders explicit dashboard fetch failure state', async () => {
   const moduleUrl = `${pathToFileURL(process.cwd())}/apps/web/src/main.js?test=fetch-failure-${Date.now()}`;
   await import(moduleUrl);
 
-  assert.equal(elements.get('#probability-value').textContent, 'Unavailable');
+  assert.equal(elements.get('#probability-value').textContent, '사용 불가');
   assert.match(elements.get('#production-readiness-status').className, /status-production-blocked/);
-  assert.match(elements.get('#production-readiness-blockers').textContent, /Dashboard API fetch failed/);
-  assert.match(elements.get('#source-status').textContent, /Dashboard API unavailable/);
-  assert.match(elements.get('#freshness-list').textContent, /dashboard-api/);
-  assert.match(elements.get('#alerts-list').textContent, /Dashboard API fetch failed/);
+  assert.match(elements.get('#production-readiness-blockers').textContent, /대시보드 API 조회 실패/);
+  assert.match(elements.get('#source-status').textContent, /대시보드 API 사용 불가/);
+  assert.match(elements.get('#freshness-list').textContent, /대시보드 API/);
+  assert.match(elements.get('#alerts-list').textContent, /대시보드 API 조회 실패/);
   assert.doesNotMatch(elements.get('#alerts-list').textContent, /SECRET_TOKEN|hidden/);
 });
