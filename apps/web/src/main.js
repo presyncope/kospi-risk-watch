@@ -4,6 +4,7 @@ const basePath = scriptPath.endsWith('/src/main.js') ? scriptPath.slice(0, -'/sr
 const apiUrl = (path) => `${basePath}${path}`;
 let refreshTimer = null;
 let clientPollingIntervalMs = null;
+let chartState = null;
 
 const STATUS_LABELS = new Map([
   ['computed', '계산 완료'],
@@ -328,38 +329,81 @@ function renderProbability(probability = {}) {
   }
 }
 
+function destroyMarketChart() {
+  if (chartState?.chart) {
+    try { chartState.chart.remove(); } catch { /* already gone */ }
+  }
+  chartState = null;
+}
+
+function chartColorsFor(changePct) {
+  const value = Number(changePct);
+  if (value > 0.05) return { line: '#4af07a', area: 'rgba(74, 240, 122, 0.18)' };
+  if (value < -0.05) return { line: '#ff5f56', area: 'rgba(255, 95, 86, 0.18)' };
+  return { line: '#f5b13d', area: 'rgba(245, 177, 61, 0.18)' };
+}
+
+function toLineData(bars) {
+  const points = [];
+  let lastTime = -Infinity;
+  for (const bar of bars) {
+    const value = Number(bar.close);
+    const seconds = Math.floor(Date.parse(bar.time) / 1000);
+    if (!Number.isFinite(value) || !Number.isFinite(seconds) || seconds <= lastTime) continue;
+    lastTime = seconds;
+    points.push({ time: seconds, value });
+  }
+  return points;
+}
+
 function renderMiniChart(instrument) {
   const node = $('#market-chart');
-  node.replaceChildren();
-  if (!instrument?.bars?.length) {
-    const empty = document.createElement('p');
-    empty.className = 'muted';
-    empty.textContent = '1분봉 차트 데이터를 사용할 수 없습니다.';
-    node.setAttribute('aria-label', '1분봉 차트 데이터 사용 불가');
-    node.append(empty);
+  if (!node) return;
+  const bars = instrument?.bars ?? [];
+  const caption = bars.length
+    ? `${instrument.label} · ${instrument.symbol} · 최근 ${bars.length}개 1분봉 · 현재 ${formatMarketNumber(instrument.last)} · 당일 ${formatPct(instrument.changePct)}`
+    : '1분봉 차트 데이터를 사용할 수 없습니다.';
+  node.setAttribute('aria-label', bars.length ? caption : '1분봉 차트 데이터 사용 불가');
+
+  const lib = typeof window !== 'undefined' ? window.LightweightCharts : undefined;
+  const points = bars.length ? toLineData(bars) : [];
+
+  // Fallback for test/SSR (no window/lib) or insufficient data: text caption only.
+  if (!lib?.createChart || points.length < 2) {
+    destroyMarketChart();
+    node.replaceChildren();
+    const text = document.createElement('p');
+    text.className = 'muted';
+    text.textContent = caption;
+    node.append(text);
     return;
   }
 
-  const bars = instrument.bars;
-  const closes = bars.map((bar) => Number(bar.close)).filter(Number.isFinite);
-  const min = Math.min(...closes);
-  const max = Math.max(...closes);
-  const range = max - min || 1;
-  const stride = Math.max(1, Math.ceil(bars.length / 72));
-  const stage = document.createElement('div');
-  stage.className = 'sparkline';
-  bars.filter((_, index) => index % stride === 0 || index === bars.length - 1).forEach((bar) => {
-    const point = document.createElement('span');
-    const y = 100 - ((bar.close - min) / range) * 100;
-    point.style.setProperty('--y', `${Math.max(2, Math.min(98, y)).toFixed(2)}%`);
-    stage.append(point);
-  });
-
-  const caption = document.createElement('div');
-  caption.className = 'chart-caption';
-  caption.textContent = `${instrument.label} · ${instrument.symbol} · 최근 ${bars.length}개 1분봉 · 현재 ${formatMarketNumber(instrument.last)} · 당일 ${formatPct(instrument.changePct)}`;
-  node.setAttribute('aria-label', caption.textContent);
-  node.append(stage, caption);
+  const colors = chartColorsFor(instrument.changePct);
+  if (!chartState) {
+    node.replaceChildren();
+    const mount = document.createElement('div');
+    mount.className = 'market-chart-canvas';
+    const captionEl = document.createElement('div');
+    captionEl.className = 'chart-caption';
+    node.append(mount, captionEl);
+    const chart = lib.createChart(mount, {
+      autoSize: true,
+      layout: { background: { type: 'solid', color: '#060a06' }, textColor: '#5d7d63', fontFamily: 'monospace', fontSize: 11 },
+      grid: { vertLines: { color: '#11231a' }, horzLines: { color: '#11231a' } },
+      rightPriceScale: { borderColor: '#1d3322' },
+      timeScale: { borderColor: '#1d3322', timeVisible: true, secondsVisible: false },
+      crosshair: { mode: 0 },
+      handleScroll: false,
+      handleScale: false,
+    });
+    const series = chart.addAreaSeries({ lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false });
+    chartState = { chart, series, captionEl };
+  }
+  chartState.series.applyOptions({ lineColor: colors.line, topColor: colors.area, bottomColor: 'rgba(6, 10, 6, 0)' });
+  chartState.series.setData(points);
+  chartState.chart.timeScale().fitContent();
+  chartState.captionEl.textContent = caption;
 }
 
 function renderMarketPulse(marketPulse = {}) {
