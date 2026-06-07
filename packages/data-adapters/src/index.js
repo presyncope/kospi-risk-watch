@@ -1,7 +1,9 @@
 import { FRESHNESS, createProvenance, sanitizePublicDiagnosticText } from '../../core/src/index.js';
 import { createCompositeMarketDataAdapter, createEcosMacroProvider, createFredMacroProvider } from './macro.js';
+import { createKisFuturesProvider } from './kis.js';
 
 export { createCompositeMarketDataAdapter, createEcosMacroProvider, createFredMacroProvider } from './macro.js';
+export { createKisFuturesProvider } from './kis.js';
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const PUBLIC_ADAPTER_ERROR_CODES = new Set([
@@ -61,6 +63,7 @@ const SNAPSHOT_FIELD_NAMES = Object.freeze([
   'bokBaseRate',
   'usdKrw',
   'ktb3y',
+  'kisFutures',
 ]);
 
 const SNAPSHOT_FIELD_NAME_SET = new Set(SNAPSHOT_FIELD_NAMES);
@@ -88,7 +91,7 @@ const ADAPTER_VALUE_SCHEMA = Object.freeze({
   marketPulse: { type: 'market-pulse' },
 });
 
-const MARKET_PULSE_INSTRUMENT_KEYS = new Set(['kospi', 'kospi200', 'usdKrw']);
+const MARKET_PULSE_INSTRUMENT_KEYS = new Set(['kospi', 'kospi200', 'usdKrw', 'kospi200Futures']);
 
 function normalizeMarketPulseInstrument(value) {
   if (!isRecord(value) || !MARKET_PULSE_INSTRUMENT_KEYS.has(value.key)) return null;
@@ -1153,6 +1156,19 @@ function macroProvidersFromEnv(env) {
     timeoutMs,
   });
   if (ecos) providers.push(ecos);
+  const kis = createKisFuturesProvider({
+    appKey: env.KIS_APP_KEY,
+    appSecret: env.KIS_APP_SECRET,
+    futuresCode: env.KIS_FUTURES_CODE,
+    baseUrl: env.KIS_BASE_URL || undefined,
+    minutesTrId: env.KIS_MINUTES_TR_ID || undefined,
+    priceTrId: env.KIS_PRICE_TR_ID || undefined,
+    custType: env.KIS_CUST_TYPE || undefined,
+    minutesParams: parseJsonObject(env.KIS_MINUTES_PARAMS_JSON),
+    priceParams: parseJsonObject(env.KIS_PRICE_PARAMS_JSON),
+    timeoutMs,
+  });
+  if (kis) providers.push(kis);
   return providers;
 }
 
