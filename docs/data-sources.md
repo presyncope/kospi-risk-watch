@@ -10,6 +10,7 @@ This dashboard treats source status as a first-class product feature. A missing,
 | `mock-market-data` | `MARKET_DATA_ADAPTER=mock` | `fresh` | Deterministic local development and tests. |
 | `mock-market-data` stale mode | `MARKET_DATA_ADAPTER=mock-stale` | `stale` | Data-quality alert testing. |
 | `mock-market-data` error mode | `MARKET_DATA_ADAPTER=mock-error` | `error` | Error rendering and degraded-state testing. |
+| `yahoo-finance-proxy` | `MARKET_DATA_ADAPTER=yahoo-finance` | `fresh`/`partial`/`error` depending on Yahoo chart responses | Observation-only KOSPI/KOSPI200/USDKRW chart proxy while KRX approval is absent; KOSPI200 is an index proxy, not futures data. |
 | `json-http-market-data` | `MARKET_DATA_ADAPTER=json-http` + `MARKET_DATA_URL` | `fresh`/`error` depending on upstream payload | Strict normalized JSON integration boundary for future approved sources and tests. |
 | `krx-open-api` | `MARKET_DATA_ADAPTER=krx-open-api` + KRX endpoint URLs + `KRX_OPEN_API_KEY` | `fresh`/`partial`/`error` depending on approved endpoint responses | Direct KRX OPEN API polling boundary for configured service URLs; remains unapproved for `liveReady` until registry approval is added. |
 
@@ -66,6 +67,28 @@ If a field is unavailable, the adapter should still include field provenance wit
 - `production-live-ready` is reserved for the full approved live-source path: source registry approval, fresh probability inputs, full live-critical derivatives coverage, applied holiday calendar, polling metadata, sanitized diagnostics, and observation-only guardrails.
 
 The API exposes this through `GET /api/readiness` and includes the same object in `GET /api/dashboard`. The readiness endpoint also mirrors `status`, `ready`, `liveReady`, and `safeToServe` at the top level so machine consumers do not confuse HTTP/service availability (`ok`/`serviceOk`) with approved live-market readiness. `safeToServe` is true only when the canonical production status is `production-safe-observation` or `production-live-ready`; adapter errors, missing polling metadata, unsafe diagnostics, or service failures keep it false. Public deployment can therefore be production-safe while honestly showing `liveReady: false` until credentials, KRX/service approvals, endpoint mapping, and registry approval exist.
+
+## Yahoo Finance observation proxy
+
+`MARKET_DATA_ADAPTER=yahoo-finance` enables a no-key fallback for the screen's market-pulse layer. It fetches Yahoo chart JSON for:
+
+- KOSPI daily history (`^KS11` by default) to compute `historicalMondayDownRate`, `recentMomentum`, and `volatilityZScore`.
+- KOSPI 1-minute bars (`^KS11`) for current downside context.
+- KOSPI200 1-minute bars (`^KS200`) as an index proxy only.
+- USD/KRW 1-minute bars (`KRW=X`) for macro/Fx context.
+
+This adapter intentionally leaves actual KOSPI200 futures basis, futures/options open interest, options volume, put/call ratio, foreigner futures flow, holiday-calendar source data, and short-selling data unavailable. It declares no approved-live capability and cannot unlock `production-live-ready`.
+
+Optional environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `YAHOO_FINANCE_KOSPI_SYMBOL` | KOSPI proxy symbol; defaults to `^KS11`. |
+| `YAHOO_FINANCE_KOSPI200_SYMBOL` | KOSPI200 index proxy symbol; defaults to `^KS200`. |
+| `YAHOO_FINANCE_USDKRW_SYMBOL` | FX context symbol; defaults to `KRW=X`. |
+| `YAHOO_FINANCE_INTRADAY_RANGE` | 1-minute chart range; defaults to `1d`. Yahoo generally caps 1-minute requests to a short recent window. |
+| `YAHOO_FINANCE_DAILY_RANGE` | Daily history range for probability inputs; defaults to `6mo`. |
+| `YAHOO_FINANCE_TIMEOUT_MS` / `YAHOO_FINANCE_MAX_BODY_BYTES` | Fetch timeout/body cap; defaults are 5000 ms and 768 KiB. |
 
 ## Normalized JSON HTTP adapter
 

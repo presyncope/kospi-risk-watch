@@ -21,10 +21,17 @@ test('dashboard HTML exposes required MVP panels and guardrails', async () => {
     'polling-interval',
     'refresh',
     'polling-state',
+    'market-pulse-title',
+    'market-pulse-summary',
+    'market-pulse-caveat',
+    'market-pulse-meta',
+    'market-chart',
+    'market-movement-grid',
     'probability-gauge',
     'probability-value',
     'probability-status',
     'probability-meta',
+    'downside-input-grid',
     'probability-contributions',
     'quant-readiness',
     'quant-readiness-gauge',
@@ -58,6 +65,8 @@ test('dashboard HTML exposes required MVP panels and guardrails', async () => {
   assert.match(html, /KOSPI200 만기/);
   assert.match(html, /시니어 퀀트 평가/);
   assert.match(html, /운영 게시 준비도/);
+  assert.match(html, /시장 1분봉 관찰/);
+  assert.match(html, /하락확률 입력 근거/);
   assert.match(html, /파생상품 지표 커버리지/);
   assert.match(html, /class="gauge/);
 });

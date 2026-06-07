@@ -35,6 +35,20 @@
       </section>
 
       <section class="grid" aria-label="대시보드 패널">
+        <article class="card market-pulse-card primary-card" aria-labelledby="market-pulse-title">
+          <p class="card-kicker">시장 1분봉 관찰</p>
+          <div class="market-pulse-head">
+            <div>
+              <h2 id="market-pulse-title">KOSPI · KOSPI200 당일 변동</h2>
+              <p id="market-pulse-summary" class="status">시장 프록시 대기 중…</p>
+              <p id="market-pulse-caveat" class="muted"></p>
+            </div>
+            <div id="market-pulse-meta" class="pulse-meta"></div>
+          </div>
+          <div id="market-chart" class="mini-chart" role="img" aria-label="KOSPI200 1분봉 프록시 차트 대기 중"></div>
+          <div id="market-movement-grid" class="movement-grid"></div>
+        </article>
+
         <article class="card probability-card primary-card" aria-labelledby="probability-title">
           <p class="card-kicker">월요일 하락 확률</p>
           <div class="score-panel">
@@ -48,6 +62,8 @@
               <dl id="probability-meta" class="meta"></dl>
             </div>
           </div>
+          <h3 class="section-subtitle">하락확률 입력 근거</h3>
+          <div id="downside-input-grid" class="downside-input-grid"></div>
           <ul id="probability-contributions" class="contributions"></ul>
         </article>
 

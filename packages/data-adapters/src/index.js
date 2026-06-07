@@ -6,6 +6,7 @@ const PUBLIC_ADAPTER_ERROR_CODES = new Set([
   'adapter_field_error',
   'adapter_json_http_failed',
   'adapter_krx_open_api_failed',
+  'adapter_yahoo_finance_failed',
   'adapter_polling_failed',
 ]);
 
@@ -35,9 +36,12 @@ function sanitizeCapabilityText(text, fallback = 'unspecified') {
 
 const SNAPSHOT_FIELD_NAMES = Object.freeze([
   'kospiDaily',
+  'kospiIntraday',
   'historicalMondayDownRate',
   'recentMomentum',
   'kospi200',
+  'kospi200Intraday',
+  'usdKrwIntraday',
   'derivativesCalendar',
   'volatility',
   'futuresBasis',
@@ -65,7 +69,53 @@ const ADAPTER_VALUE_SCHEMA = Object.freeze({
   putCallRatio: { type: 'number' },
   foreignerNetFutures: { type: 'number' },
   holidayCalendar: { type: 'date-array', minItems: 1, maxItems: 512 },
+  marketPulse: { type: 'market-pulse' },
 });
+
+const MARKET_PULSE_INSTRUMENT_KEYS = new Set(['kospi', 'kospi200', 'usdKrw']);
+
+function normalizeMarketPulseInstrument(value) {
+  if (!isRecord(value) || !MARKET_PULSE_INSTRUMENT_KEYS.has(value.key)) return null;
+  const bars = Array.isArray(value.bars)
+    ? value.bars.slice(-120).flatMap((bar) => {
+      if (!isRecord(bar)) return [];
+      const time = safeObservedAt(bar.time, null);
+      const close = typeof bar.close === 'number' && Number.isFinite(bar.close) ? bar.close : null;
+      return time && close != null ? [{ time, close }] : [];
+    })
+    : [];
+  const normalized = {
+    key: value.key,
+    label: sanitizePublicAdapterText(value.label, value.key),
+    symbol: sanitizePublicAdapterText(value.symbol, value.key),
+    role: sanitizePublicAdapterText(value.role, 'market-proxy'),
+    observedAt: safeObservedAt(value.observedAt, null),
+    last: Number.isFinite(value.last) ? value.last : null,
+    previousClose: Number.isFinite(value.previousClose) ? value.previousClose : null,
+    changePct: Number.isFinite(value.changePct) ? value.changePct : null,
+    momentum5mPct: Number.isFinite(value.momentum5mPct) ? value.momentum5mPct : null,
+    momentum20mPct: Number.isFinite(value.momentum20mPct) ? value.momentum20mPct : null,
+    rangePct: Number.isFinite(value.rangePct) ? value.rangePct : null,
+    bars,
+  };
+  return normalized.last == null && bars.length === 0 ? null : normalized;
+}
+
+function normalizeMarketPulseValue(value) {
+  if (!isRecord(value)) return undefined;
+  const instruments = Array.isArray(value.instruments)
+    ? value.instruments.map(normalizeMarketPulseInstrument).filter(Boolean)
+    : [];
+  if (instruments.length === 0) return undefined;
+  return {
+    status: normalizeFreshness(value.status, FRESHNESS.UNAVAILABLE),
+    source: sanitizePublicAdapterText(value.source, 'yahoo-finance-proxy'),
+    label: sanitizePublicAdapterText(value.label, 'Unofficial delayed market proxy; not KOSPI200 futures.'),
+    observedAt: safeObservedAt(value.observedAt, null),
+    primaryKey: MARKET_PULSE_INSTRUMENT_KEYS.has(value.primaryKey) ? value.primaryKey : instruments[0].key,
+    instruments,
+  };
+}
 
 function unavailableFields(source, observedAt, { freshness = FRESHNESS.UNAVAILABLE, details = null } = {}) {
   return Object.fromEntries(
@@ -143,6 +193,10 @@ function normalizeAdapterValues(values = {}) {
         dateKeys.push(trimmed);
       }
       if (valid) normalized[key] = [...new Set(dateKeys)];
+    }
+    if (schema.type === 'market-pulse') {
+      const marketPulse = normalizeMarketPulseValue(value);
+      if (marketPulse) normalized[key] = marketPulse;
     }
   }
   return normalized;
@@ -600,6 +654,244 @@ function krxUnavailableSnapshot({ source, observedAt, message, freshness = FRESH
   });
 }
 
+function yahooChartUrl(symbol, { range, interval }) {
+  const encoded = encodeURIComponent(symbol);
+  return appendQueryParams(`https://query1.finance.yahoo.com/v8/finance/chart/${encoded}`, { range, interval });
+}
+
+async function fetchYahooChart({ symbol, range, interval, fetchImpl, timeoutMs, maxBodyBytes }) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetchImpl(yahooChartUrl(symbol, { range, interval }), {
+      headers: { accept: 'application/json', 'user-agent': 'kospi-risk-watch/0.1 observation-only' },
+      signal: controller?.signal,
+    });
+    if (!response?.ok) throw new Error('adapter_yahoo_http_status_error');
+    const text = await readResponseText(response, maxBodyBytes);
+    const payload = JSON.parse(text);
+    const result = payload?.chart?.result?.[0];
+    if (!isRecord(result)) throw new Error('adapter_yahoo_chart_result_missing');
+    return result;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function yahooCloseSeries(result) {
+  const timestamps = Array.isArray(result?.timestamp) ? result.timestamp : [];
+  const closes = result?.indicators?.quote?.[0]?.close;
+  if (!Array.isArray(closes)) return [];
+  return timestamps
+    .map((timestamp, index) => {
+      const close = closes[index];
+      if (!Number.isFinite(timestamp) || !Number.isFinite(close)) return null;
+      return { time: new Date(timestamp * 1000).toISOString(), close };
+    })
+    .filter(Boolean);
+}
+
+function yahooDailySeries(result) {
+  return yahooCloseSeries(result)
+    .map((row) => ({ date: row.time.slice(0, 10), close: row.close }))
+    .filter((row) => row.date && Number.isFinite(row.close))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function pctChange(current, previous) {
+  return Number.isFinite(current) && Number.isFinite(previous) && previous !== 0
+    ? (current / previous - 1) * 100
+    : null;
+}
+
+function momentumPct(bars, lookback) {
+  if (bars.length < 2) return null;
+  const last = bars.at(-1);
+  const prior = bars[Math.max(0, bars.length - 1 - lookback)];
+  return pctChange(last?.close, prior?.close);
+}
+
+function rangePct(bars, reference) {
+  if (!Number.isFinite(reference) || reference === 0 || bars.length === 0) return null;
+  const closes = bars.map((bar) => bar.close).filter(Number.isFinite);
+  if (closes.length === 0) return null;
+  return ((Math.max(...closes) - Math.min(...closes)) / reference) * 100;
+}
+
+function roundMetric(value, digits = 4) {
+  return Number.isFinite(value) ? Number(value.toFixed(digits)) : null;
+}
+
+function yahooInstrumentFromResult({ key, label, symbol, role, result }) {
+  const allBars = yahooCloseSeries(result);
+  const bars = allBars.slice(-90);
+  const last = bars.at(-1)?.close ?? result?.meta?.regularMarketPrice ?? null;
+  const previousClose = result?.meta?.chartPreviousClose ?? result?.meta?.previousClose ?? null;
+  return {
+    key,
+    label,
+    symbol,
+    role,
+    observedAt: bars.at(-1)?.time ?? null,
+    last: Number.isFinite(last) ? last : null,
+    previousClose: Number.isFinite(previousClose) ? previousClose : null,
+    changePct: roundMetric(pctChange(last, previousClose)),
+    momentum5mPct: roundMetric(momentumPct(bars, 5)),
+    momentum20mPct: roundMetric(momentumPct(bars, 20)),
+    rangePct: roundMetric(rangePct(bars, previousClose)),
+    bars,
+  };
+}
+
+function yahooErrorSnapshot({ source, observedAt, capabilities }) {
+  return normalizeAdapterResult({
+    source,
+    observedAt,
+    freshness: FRESHNESS.ERROR,
+    error: 'adapter_yahoo_finance_failed',
+    message: 'Yahoo Finance proxy data could not be polled; details are hidden from the public dashboard.',
+    capabilities,
+    fields: unavailableFields(source, observedAt, {
+      freshness: FRESHNESS.ERROR,
+      details: 'Yahoo Finance proxy polling failed.',
+    }),
+    values: {},
+  });
+}
+
+export function createYahooFinanceMarketDataAdapter({
+  source = 'yahoo-finance-proxy',
+  symbols = {},
+  intradayRange = '1d',
+  dailyRange = '6mo',
+  fetchImpl = globalThis.fetch,
+  timeoutMs = 5_000,
+  maxBodyBytes = 768 * 1024,
+} = {}) {
+  const configuredSymbols = {
+    kospi: symbols.kospi || '^KS11',
+    kospi200: symbols.kospi200 || '^KS200',
+    usdKrw: symbols.usdKrw || 'KRW=X',
+  };
+  const capabilities = {
+    liveMarketData: false,
+    approvedPublic: false,
+    readinessAllowed: false,
+    sourceApproval: 'yahoo-finance-proxy',
+    license: 'unapproved',
+  };
+
+  return {
+    source,
+    async getSnapshot() {
+      const observedAt = new Date().toISOString();
+      if (typeof fetchImpl !== 'function') return yahooErrorSnapshot({ source, observedAt, capabilities });
+
+      const requests = {
+        kospiDaily: fetchYahooChart({ symbol: configuredSymbols.kospi, range: dailyRange, interval: '1d', fetchImpl, timeoutMs, maxBodyBytes }),
+        kospiIntraday: fetchYahooChart({ symbol: configuredSymbols.kospi, range: intradayRange, interval: '1m', fetchImpl, timeoutMs, maxBodyBytes }),
+        kospi200Intraday: fetchYahooChart({ symbol: configuredSymbols.kospi200, range: intradayRange, interval: '1m', fetchImpl, timeoutMs, maxBodyBytes }),
+        usdKrwIntraday: fetchYahooChart({ symbol: configuredSymbols.usdKrw, range: intradayRange, interval: '1m', fetchImpl, timeoutMs, maxBodyBytes }),
+      };
+      const entries = await Promise.all(Object.entries(requests).map(async ([key, request]) => {
+        try {
+          return [key, await request];
+        } catch {
+          return [key, null];
+        }
+      }));
+      const results = Object.fromEntries(entries);
+      const successfulResults = Object.values(results).filter(Boolean);
+      if (successfulResults.length === 0) return yahooErrorSnapshot({ source, observedAt, capabilities });
+
+      const fields = unavailableFields(source, observedAt, {
+        freshness: FRESHNESS.UNAVAILABLE,
+        details: 'Yahoo Finance proxy does not provide this KRX derivatives metric.',
+      });
+      const values = {};
+
+      const kospiSeries = yahooDailySeries(results.kospiDaily);
+      if (kospiSeries.length >= 2) {
+        markField(fields, 'kospiDaily', { source, observedAt, details: 'Yahoo Finance KOSPI daily proxy; unofficial and not exchange-approved.' });
+        const baseline = mondayDownRate(kospiSeries);
+        if (Number.isFinite(baseline)) {
+          values.historicalMondayDownRate = baseline;
+          markField(fields, 'historicalMondayDownRate', { source, observedAt, details: 'Computed from Yahoo Finance KOSPI daily proxy Monday closes.' });
+        }
+        const momentum = recentMomentum(kospiSeries);
+        if (Number.isFinite(momentum)) {
+          values.recentMomentum = momentum;
+          markField(fields, 'recentMomentum', { source, observedAt, details: 'Computed from recent Yahoo Finance KOSPI daily proxy closes.' });
+        }
+        const volZ = volatilityZScore(kospiSeries);
+        if (Number.isFinite(volZ)) {
+          values.volatilityZScore = volZ;
+          markField(fields, 'volatility', { source, observedAt, details: 'Computed from Yahoo Finance KOSPI daily proxy return volatility.' });
+        }
+      }
+
+      const instruments = [];
+      if (results.kospiIntraday) {
+        const instrument = yahooInstrumentFromResult({
+          key: 'kospi',
+          label: 'KOSPI 지수',
+          symbol: configuredSymbols.kospi,
+          role: 'downside-probability-input',
+          result: results.kospiIntraday,
+        });
+        instruments.push(instrument);
+        markField(fields, 'kospiIntraday', { source, observedAt: instrument.observedAt ?? observedAt, details: 'Yahoo Finance 1-minute KOSPI proxy.' });
+      }
+      if (results.kospi200Intraday) {
+        const instrument = yahooInstrumentFromResult({
+          key: 'kospi200',
+          label: 'KOSPI200 지수 프록시',
+          symbol: configuredSymbols.kospi200,
+          role: 'index-proxy-not-futures',
+          result: results.kospi200Intraday,
+        });
+        instruments.push(instrument);
+        markField(fields, 'kospi200', { source, observedAt: instrument.observedAt ?? observedAt, details: 'Yahoo Finance KOSPI200 index proxy; not KOSPI200 futures.' });
+        markField(fields, 'kospi200Intraday', { source, observedAt: instrument.observedAt ?? observedAt, details: 'Yahoo Finance 1-minute KOSPI200 index proxy; not KOSPI200 futures.' });
+      }
+      if (results.usdKrwIntraday) {
+        const instrument = yahooInstrumentFromResult({
+          key: 'usdKrw',
+          label: 'USD/KRW',
+          symbol: configuredSymbols.usdKrw,
+          role: 'macro-fx-context',
+          result: results.usdKrwIntraday,
+        });
+        instruments.push(instrument);
+        markField(fields, 'usdKrwIntraday', { source, observedAt: instrument.observedAt ?? observedAt, details: 'Yahoo Finance 1-minute USD/KRW proxy.' });
+      }
+
+      if (instruments.length > 0) {
+        values.marketPulse = {
+          status: FRESHNESS.FRESH,
+          source,
+          label: 'Yahoo Finance 1-minute proxy; KOSPI200 is an index proxy, not KOSPI200 futures.',
+          observedAt: instruments.find((instrument) => instrument.key === 'kospi200')?.observedAt ?? instruments[0].observedAt ?? observedAt,
+          primaryKey: instruments.some((instrument) => instrument.key === 'kospi200') ? 'kospi200' : instruments[0].key,
+          instruments,
+        };
+      }
+
+      markField(fields, 'derivativesCalendar', { source: 'krx-calendar-rules', observedAt, details: 'Rule-based KOSPI200 expiry calendar is available.' });
+      const freshness = fields.kospiDaily?.freshness === FRESHNESS.FRESH || instruments.length > 0 ? FRESHNESS.FRESH : FRESHNESS.UNAVAILABLE;
+      return normalizeAdapterResult({
+        source,
+        observedAt,
+        freshness,
+        message: 'Yahoo Finance proxy was polled for KOSPI/KOSPI200 observation; derivatives/OI/short-selling metrics remain unavailable.',
+        capabilities,
+        fields,
+        values,
+      });
+    },
+  };
+}
+
 export function createKrxOpenApiMarketDataAdapter({
   apiKey,
   endpoints = {},
@@ -821,6 +1113,20 @@ export function createAdapterFromEnv(env = process.env) {
   if (env.MARKET_DATA_ADAPTER === 'mock') return createMockMarketDataAdapter();
   if (env.MARKET_DATA_ADAPTER === 'mock-stale') return createMockMarketDataAdapter({ stale: true });
   if (env.MARKET_DATA_ADAPTER === 'mock-error') return createMockMarketDataAdapter({ fail: true });
+  if (env.MARKET_DATA_ADAPTER === 'yahoo-finance') {
+    return createYahooFinanceMarketDataAdapter({
+      source: env.MARKET_DATA_SOURCE || 'yahoo-finance-proxy',
+      symbols: {
+        kospi: env.YAHOO_FINANCE_KOSPI_SYMBOL || '^KS11',
+        kospi200: env.YAHOO_FINANCE_KOSPI200_SYMBOL || '^KS200',
+        usdKrw: env.YAHOO_FINANCE_USDKRW_SYMBOL || 'KRW=X',
+      },
+      intradayRange: env.YAHOO_FINANCE_INTRADAY_RANGE || '1d',
+      dailyRange: env.YAHOO_FINANCE_DAILY_RANGE || '6mo',
+      timeoutMs: parsePositiveNumber(env.YAHOO_FINANCE_TIMEOUT_MS, parsePositiveNumber(env.MARKET_DATA_TIMEOUT_MS, 5_000)),
+      maxBodyBytes: parsePositiveNumber(env.YAHOO_FINANCE_MAX_BODY_BYTES, parsePositiveNumber(env.MARKET_DATA_MAX_BODY_BYTES, 768 * 1024)),
+    });
+  }
   if (env.MARKET_DATA_ADAPTER === 'krx-open-api') {
     return createKrxOpenApiMarketDataAdapter({
       apiKey: env.KRX_OPEN_API_KEY,

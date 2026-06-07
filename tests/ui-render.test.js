@@ -81,10 +81,16 @@ function installFakeDocument() {
     'polling-interval',
     'refresh',
     'polling-state',
+    'market-pulse-summary',
+    'market-pulse-caveat',
+    'market-pulse-meta',
+    'market-chart',
+    'market-movement-grid',
     'probability-gauge',
     'probability-value',
     'probability-status',
     'probability-meta',
+    'downside-input-grid',
     'probability-contributions',
     'quant-readiness-gauge',
     'quant-readiness-score',
@@ -188,6 +194,57 @@ const dashboardFixture = Object.freeze({
       { input: 'volatilityZScore', points: 4.4, note: 'Elevated volatility marker.' },
     ],
   },
+  marketPulse: {
+    status: 'fresh',
+    source: 'yahoo-finance-proxy',
+    label: 'Yahoo Finance 1-minute proxy; KOSPI200 is an index proxy, not KOSPI200 futures.',
+    observedAt: '2026-06-06T06:00:00Z',
+    primaryKey: 'kospi200',
+    caveat: 'Yahoo/yfinance route is a KOSPI200 index proxy, not futures data.',
+    instruments: [
+      {
+        key: 'kospi200',
+        label: 'KOSPI200 지수 프록시',
+        symbol: '^KS200',
+        role: 'index-proxy-not-futures',
+        observedAt: '2026-06-06T06:00:00Z',
+        last: 321.1,
+        previousClose: 320,
+        changePct: 0.34375,
+        momentum5mPct: -0.08,
+        momentum20mPct: 0.21,
+        rangePct: 0.78,
+        bars: [
+          { time: '2026-06-06T05:58:00Z', close: 320.5 },
+          { time: '2026-06-06T05:59:00Z', close: 320.8 },
+          { time: '2026-06-06T06:00:00Z', close: 321.1 },
+        ],
+      },
+      {
+        key: 'kospi',
+        label: 'KOSPI 지수',
+        symbol: '^KS11',
+        role: 'downside-probability-input',
+        observedAt: '2026-06-06T06:00:00Z',
+        last: 2720.42,
+        previousClose: 2730,
+        changePct: -0.3509,
+        momentum5mPct: -0.12,
+        momentum20mPct: -0.33,
+        rangePct: 1.02,
+        bars: [
+          { time: '2026-06-06T05:58:00Z', close: 2722 },
+          { time: '2026-06-06T05:59:00Z', close: 2721 },
+          { time: '2026-06-06T06:00:00Z', close: 2720.42 },
+        ],
+      },
+    ],
+  },
+  downsideInputs: [
+    { key: 'historicalMondayDownRate', label: '월요일 하락 기준율', value: '53.00%', status: 'fresh', role: '확률의 기본값', detail: 'Baseline Monday decline frequency.' },
+    { key: 'kospiIntraday', label: 'KOSPI 당일 변동', value: '-0.35%', status: 'fresh', role: '현재 시장 방향 확인', detail: '^KS11 · 5분 -0.12% · 20분 -0.33%' },
+    { key: 'kospi200Intraday', label: 'KOSPI200 지수 프록시', value: '+0.34%', status: 'fresh', role: '선물 대체 아님', detail: '^KS200 · 선물/OI/옵션 데이터가 아닌 지수 차트입니다.' },
+  ],
   expirySettlement: {
     asOf: '2026-06-10',
     futuresMonthlyFinalTradingDay: '2026-06-11',
@@ -274,6 +331,13 @@ test('UI module renders dashboard state and polling control with mocked APIs', a
     assert.match(elements.get('#probability-status').className, /status-degraded/);
     assert.match(elements.get('#probability-status').textContent, /데이터 제한/);
     assert.match(elements.get('#probability-meta').textContent, /목업 기반 제한 표시 점검/);
+    assert.match(elements.get('#market-pulse-summary').textContent, /지수 프록시/);
+    assert.match(elements.get('#market-pulse-caveat').textContent, /선물이 아니라 지수 프록시/);
+    assert.match(elements.get('#market-chart').textContent, /최근 3개 1분봉/);
+    assert.match(elements.get('#market-movement-grid').textContent, /KOSPI 지수/);
+    assert.match(elements.get('#market-movement-grid').textContent, /하락확률 입력/);
+    assert.match(elements.get('#downside-input-grid').textContent, /월요일 하락 기준율/);
+    assert.match(elements.get('#downside-input-grid').textContent, /KOSPI 당일 변동/);
     assert.match(elements.get('#source-status').textContent, /목업 고정값/);
     assert.match(elements.get('#source-status').textContent, /라이브 데이터 아님/);
     assert.match(elements.get('#source-status').textContent, /로컬 개발과 테스트용/);
@@ -360,6 +424,7 @@ test('UI module renders explicit dashboard fetch failure state', async () => {
   assert.match(elements.get('#production-readiness-status').className, /status-production-blocked/);
   assert.match(elements.get('#production-readiness-blockers').textContent, /대시보드 API 조회 실패/);
   assert.match(elements.get('#source-status').textContent, /대시보드 API 사용 불가/);
+  assert.match(elements.get('#market-pulse-summary').textContent, /대시보드 API 사용 불가/);
   assert.match(elements.get('#freshness-list').textContent, /대시보드 API/);
   assert.match(elements.get('#alerts-list').textContent, /대시보드 API 조회 실패/);
   assert.doesNotMatch(elements.get('#alerts-list').textContent, /SECRET_TOKEN|hidden/);

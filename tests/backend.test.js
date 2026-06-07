@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { createAppServer } from '../apps/api/src/server.js';
 import { loadEnvFile, parseEnvFileContent } from '../apps/api/src/env.js';
 import { FRESHNESS } from '../packages/core/src/index.js';
-import { createAdapterFromEnv, createJsonHttpMarketDataAdapter, createKrxOpenApiMarketDataAdapter, createMockMarketDataAdapter, createUnavailableAdapter, normalizeAdapterResult } from '../packages/data-adapters/src/index.js';
+import { createAdapterFromEnv, createJsonHttpMarketDataAdapter, createKrxOpenApiMarketDataAdapter, createMockMarketDataAdapter, createUnavailableAdapter, createYahooFinanceMarketDataAdapter, normalizeAdapterResult } from '../packages/data-adapters/src/index.js';
 
 async function withServer(server, fn) {
   await new Promise((resolve) => server.listen(0, resolve));
@@ -461,6 +461,107 @@ test('dashboard endpoint includes production readiness', async () => {
   });
 });
 
+function epoch(dateTime) {
+  return Math.floor(Date.parse(dateTime) / 1000);
+}
+
+function yahooChartPayload({ symbol, points, previousClose }) {
+  const closes = points.map((point) => point.close);
+  return {
+    chart: {
+      result: [{
+        meta: {
+          symbol,
+          chartPreviousClose: previousClose,
+          regularMarketPrice: closes.at(-1),
+        },
+        timestamp: points.map((point) => epoch(point.time)),
+        indicators: { quote: [{ close: closes }] },
+      }],
+      error: null,
+    },
+  };
+}
+
+test('Yahoo Finance proxy adapter exposes intraday market pulse without live-ready claims', async () => {
+  const payloads = new Map([
+    ['^KS11|1d', yahooChartPayload({
+      symbol: '^KS11',
+      previousClose: 100,
+      points: [
+        { time: '2026-05-29T00:00:00Z', close: 100 },
+        { time: '2026-06-01T00:00:00Z', close: 98 },
+        { time: '2026-06-02T00:00:00Z', close: 99 },
+        { time: '2026-06-03T00:00:00Z', close: 97 },
+        { time: '2026-06-08T00:00:00Z', close: 96 },
+      ],
+    })],
+    ['^KS11|1m', yahooChartPayload({
+      symbol: '^KS11',
+      previousClose: 2730,
+      points: [
+        { time: '2026-06-08T05:58:00Z', close: 2722 },
+        { time: '2026-06-08T05:59:00Z', close: 2721 },
+        { time: '2026-06-08T06:00:00Z', close: 2720.42 },
+      ],
+    })],
+    ['^KS200|1m', yahooChartPayload({
+      symbol: '^KS200',
+      previousClose: 320,
+      points: [
+        { time: '2026-06-08T05:58:00Z', close: 320.5 },
+        { time: '2026-06-08T05:59:00Z', close: 320.8 },
+        { time: '2026-06-08T06:00:00Z', close: 321.1 },
+      ],
+    })],
+    ['KRW=X|1m', yahooChartPayload({
+      symbol: 'KRW=X',
+      previousClose: 1380,
+      points: [
+        { time: '2026-06-08T05:58:00Z', close: 1381 },
+        { time: '2026-06-08T05:59:00Z', close: 1382 },
+        { time: '2026-06-08T06:00:00Z', close: 1383 },
+      ],
+    })],
+  ]);
+  const fetchCalls = [];
+  const adapter = createYahooFinanceMarketDataAdapter({
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      const symbol = decodeURIComponent(parsed.pathname.split('/').at(-1));
+      const interval = parsed.searchParams.get('interval');
+      fetchCalls.push({ symbol, interval, range: parsed.searchParams.get('range') });
+      return {
+        ok: true,
+        text: async () => JSON.stringify(payloads.get(`${symbol}|${interval}`)),
+      };
+    },
+  });
+
+  const snapshot = await adapter.getSnapshot();
+  assert.equal(snapshot.source, 'yahoo-finance-proxy');
+  assert.equal(snapshot.freshness, FRESHNESS.FRESH);
+  assert.equal(snapshot.capabilities.liveMarketData, false);
+  assert.equal(snapshot.values.historicalMondayDownRate, 1);
+  assert.equal(snapshot.fields.kospiIntraday.freshness, FRESHNESS.FRESH);
+  assert.equal(snapshot.fields.kospi200Intraday.freshness, FRESHNESS.FRESH);
+  assert.equal(snapshot.values.marketPulse.primaryKey, 'kospi200');
+  assert.equal(snapshot.values.marketPulse.instruments.length, 3);
+  assert.ok(snapshot.values.marketPulse.instruments.find((instrument) => instrument.key === 'kospi200').bars.length >= 3);
+  assert.ok(fetchCalls.some((call) => call.symbol === '^KS200' && call.interval === '1m'));
+
+  await withServer(createAppServer({ adapter }), async (baseUrl) => {
+    const dashboard = await (await fetch(`${baseUrl}/api/dashboard?force=true`)).json();
+    assert.equal(dashboard.probability.status, 'computed');
+    assert.equal(dashboard.marketPulse.primaryKey, 'kospi200');
+    assert.ok(dashboard.downsideInputs.some((input) => input.key === 'kospi200Intraday'));
+    assert.equal(dashboard.sourceStatus.liveData, false);
+    assert.equal(dashboard.sourceStatus.mode, 'external-source-unapproved');
+    assert.equal(dashboard.productionReadiness.liveReady, false);
+    assert.equal(dashboard.productionReadiness.safeToServe, true);
+  });
+});
+
 test('KRX OPEN API adapter maps configured live endpoint rows through the approval gate', async () => {
   const fetchCalls = [];
   const payloads = {
@@ -587,6 +688,15 @@ test('environment factory selects KRX OPEN API adapter only when explicitly requ
     KRX_OPEN_API_LICENSE: 'krx-open-api-test-license',
   });
   assert.equal(adapter.source, 'krx-open-api');
+});
+
+test('environment factory selects Yahoo Finance proxy adapter explicitly', () => {
+  const adapter = createAdapterFromEnv({
+    MARKET_DATA_ADAPTER: 'yahoo-finance',
+    YAHOO_FINANCE_KOSPI_SYMBOL: '^KS11',
+    YAHOO_FINANCE_KOSPI200_SYMBOL: '^KS200',
+  });
+  assert.equal(adapter.source, 'yahoo-finance-proxy');
 });
 
 test('JSON HTTP adapter maps normalized payload through the strict source boundary', async () => {

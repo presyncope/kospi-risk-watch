@@ -38,3 +38,4 @@ Thumbs.db
 # OMX/Codex local workflow state
 .omx/
 .codex/
+.omc/

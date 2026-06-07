@@ -44,11 +44,13 @@ Runtime configuration can be supplied either through the shell/systemd environme
 | Variable | Values | Purpose |
 | --- | --- | --- |
 | `PORT` | number | Local server port; defaults to `4173`. |
-| `MARKET_DATA_ADAPTER` | `mock`, `mock-stale`, `mock-error`, `json-http`, `krx-open-api` | Uses deterministic mock snapshots, the strict normalized JSON integration adapter, or configured KRX OPEN API endpoint polling. |
+| `MARKET_DATA_ADAPTER` | `mock`, `mock-stale`, `mock-error`, `yahoo-finance`, `json-http`, `krx-open-api` | Uses deterministic mock snapshots, Yahoo Finance observation proxies, the strict normalized JSON integration adapter, or configured KRX OPEN API endpoint polling. |
 | `MARKET_DATA_URL` | URL | Required only for `MARKET_DATA_ADAPTER=json-http`; must return the normalized snapshot contract documented in `docs/data-sources.md`. |
 | `MARKET_DATA_SOURCE` | string | Canonical source id for `json-http` or `krx-open-api`; defaults to `json-http-market-data` or `krx-open-api`. |
 | `MARKET_DATA_AUTH_HEADER_NAME` / `MARKET_DATA_AUTH_HEADER_VALUE` | strings | Optional environment-only header pair for `json-http`; rejected on plain `http:` URLs. |
 | `MARKET_DATA_TIMEOUT_MS` / `MARKET_DATA_MAX_BODY_BYTES` | numbers | Optional timeout/body limits for `json-http`; defaults are 5000 ms and 256 KiB. |
+| `YAHOO_FINANCE_KOSPI_SYMBOL` / `YAHOO_FINANCE_KOSPI200_SYMBOL` / `YAHOO_FINANCE_USDKRW_SYMBOL` | Yahoo symbols | Optional symbols for the `yahoo-finance` observation proxy; defaults to `^KS11`, `^KS200`, and `KRW=X`. |
+| `YAHOO_FINANCE_INTRADAY_RANGE` / `YAHOO_FINANCE_DAILY_RANGE` | Yahoo ranges | Optional ranges for 1-minute market pulse and daily probability inputs; defaults to `1d` and `6mo`. |
 | `KRX_OPEN_API_KEY` | credential string | Required for `MARKET_DATA_ADAPTER=krx-open-api`; sent as `AUTH_KEY` by default. |
 | `KRX_OPEN_API_KOSPI_DAILY_URL` | URL | Approved KRX KOSPI daily endpoint; derives KOSPI input freshness, Monday baseline rate, momentum, and volatility. |
 | `KRX_OPEN_API_KOSPI200_DAILY_URL` | URL | Approved KRX KOSPI200 daily endpoint; used with futures rows to derive basis. |
@@ -63,7 +65,10 @@ Examples:
 MARKET_DATA_ADAPTER=mock npm run dev
 MARKET_DATA_ADAPTER=mock-stale npm run dev
 MARKET_DATA_ADAPTER=mock-error npm run dev
+MARKET_DATA_ADAPTER=yahoo-finance npm run dev
 ```
+
+`MARKET_DATA_ADAPTER=yahoo-finance` is an observation-only fallback for KOSPI/KOSPI200/USDKRW chart proxies while KRX approval is absent. It labels KOSPI200 as an index proxy, not KOSPI200 futures, keeps derivatives/OI/short-selling metrics unavailable, and cannot unlock `liveReady`.
 
 Example KRX OPEN API shape after service approval and endpoint mapping:
 

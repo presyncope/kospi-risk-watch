@@ -15,6 +15,7 @@
   - `apps/web/src/main.js` — current text rendering and state mapping; API subpath-safe fetches.
   - `apps/web/src/styles.css` — current dark theme, two-column card grid, pill/status styles.
   - No existing design docs, screenshots, brand assets, icons, Figma files, or visual-regression baselines were found in the repository.
+  - 2026-06-07 refresh: user feedback that the live screen over-weighted readiness plumbing and under-weighted the actual job: “코스피 월요일 하락 확률 · KOSPI200 만기/결제 리스크 관찰”.
 
 ## Brand
 - Personality:
@@ -36,10 +37,13 @@
   - Improve at-a-glance comprehension through stronger visual hierarchy, score gauges, metric tiles, and freshness/state grouping.
   - Preserve honest data readiness semantics: public-safe observation is acceptable; live readiness remains false until approved data sources exist.
   - Keep all controls observation-only.
+  - Put market movement evidence first: KOSPI/KOSPI200 1-minute proxy chart, intraday change, short momentum, and volatility context should be visible before generic readiness plumbing.
+  - Make the probability card explain “what inputs are currently moving the downside estimate” rather than only showing a headline probability.
 - Non-goals:
   - No automated trading, order routing, broker integration, investment advice, or position sizing.
   - No new paid/closed data dependency.
   - No complex ML or backtested prediction claims in this pass.
+  - No false KOSPI200 futures claim from Yahoo/yfinance symbols. Until an approved KRX/derivatives source exists, Yahoo KOSPI200 is an index proxy and must be labelled as such.
 - Success signals:
   - Korean labels/microcopy across the visible dashboard.
   - Probability, quant readiness, and production readiness cards expose visual gauges/progress without overstating readiness.
@@ -56,6 +60,7 @@
   - See Monday downside probability status and missing/degraded inputs.
   - Review KOSPI200 expiry/settlement dates and derivative metric availability.
   - Adjust UI polling interval without changing server-wide polling cadence.
+  - Check whether current KOSPI/KOSPI200 intraday movement supports downside-risk observation, without treating it as a trading signal.
 - Key contexts of use:
   - Desktop browser on a public HTTPS reverse-proxy subpath.
   - Quick operational checks during market-monitoring preparation.
@@ -70,9 +75,10 @@
 - Content hierarchy:
   1. Hero: Korean product title, non-advice guardrail, live/safety semantics.
   2. Polling controls: interval and manual refresh.
-  3. Primary status cards: Monday downside probability, senior quant readiness, production readiness.
-  4. Market structure cards: expiry/settlement and derivatives coverage.
-  5. Source and alert cards: freshness and informational alerts.
+  3. Market pulse: KOSPI/KOSPI200 intraday chart, current change, 5/20-minute momentum, range/volatility context, and clear Yahoo-proxy/not-futures labelling.
+  4. Monday downside probability: headline gauge plus input evidence table and contribution notes.
+  5. KOSPI200 expiry/settlement and derivatives coverage.
+  6. Quant/production/source readiness and alerts.
 
 ## Design principles
 - Principle 1: “정확함이 화려함보다 우선한다.” Visual emphasis must make missing/blocked states clearer, not conceal them.
@@ -108,6 +114,7 @@
   - `.hero-summary` for compact safety/live/data-rights badges.
   - `.score-panel` for primary card visual hierarchy.
   - `.metric-grid` / richer `.metric-row` and `.freshness-row` treatments for scanability.
+  - `.market-pulse-card`, `.mini-chart`, `.sparkline`, `.movement-grid`, and `.downside-input-grid` for market-first evidence.
 - Variants and states:
   - Computed/fresh/pass/available/live-ready: green.
   - Degraded/stale/watch/partial/operational-shell/production-safe-observation: amber.
@@ -168,6 +175,7 @@
   - Every panel with unavailable/live-blocked data should state the limitation plainly.
   - Avoid trade-instruction, recommendation, sizing, or profit framing except inside guardrails that say they are not provided.
   - Backend enum values may be translated for display, but test/debug evidence can retain raw values.
+  - Use “KOSPI200 지수 프록시” for Yahoo/yfinance chart data; do not call it “KOSPI200 선물” unless an actual futures source is configured.
 
 ## Implementation constraints
 - Framework/styling system:

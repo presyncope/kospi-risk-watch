@@ -45,6 +45,10 @@ const FIELD_LABELS = new Map([
   ['optionsVolume', '옵션 거래량'],
   ['putCallRatio', '풋/콜 비율'],
   ['foreignerNetFuturesFlow', '외국인 선물 순흐름'],
+  ['kospiIntraday', 'KOSPI 1분봉'],
+  ['kospi200Intraday', 'KOSPI200 지수 1분봉'],
+  ['usdKrwIntraday', 'USD/KRW 1분봉'],
+  ['expirySettlementRisk', '만기·결제 근접도'],
   ['dashboard-api', '대시보드 API'],
   ['adapter', '어댑터'],
 ]);
@@ -95,6 +99,16 @@ const TEXT_REPLACEMENTS = [
   [/No production readiness blockers at the current system\/data-rights level\./gi, '현재 시스템/데이터 권리 수준의 게시 준비 차단 항목이 없습니다.'],
   [/No contribution list until required inputs are available\./gi, '필수 입력이 들어오기 전까지 기여도 목록은 표시하지 않습니다.'],
   [/No informational alerts at the current thresholds\./gi, '현재 임계값 기준 정보성 알림이 없습니다.'],
+  [/Yahoo Finance proxy was polled for KOSPI\/KOSPI200 observation; derivatives\/OI\/short-selling metrics remain unavailable\./gi, 'Yahoo Finance 프록시로 KOSPI/KOSPI200 관찰 데이터를 조회했습니다. 파생상품/OI/숏 관련 지표는 아직 미제공입니다.'],
+  [/Yahoo Finance 1-minute proxy; KOSPI200 is an index proxy, not KOSPI200 futures\./gi, 'Yahoo Finance 1분봉 프록시입니다. KOSPI200은 선물 데이터가 아니라 지수 프록시입니다.'],
+  [/Yahoo\/yfinance route is a KOSPI200 index proxy, not futures data\./gi, 'Yahoo/yfinance 경로는 KOSPI200 선물이 아니라 지수 프록시입니다.'],
+  [/not KOSPI200 futures/gi, 'KOSPI200 선물 아님'],
+  [/KOSPI200 index proxy/gi, 'KOSPI200 지수 프록시'],
+  [/KOSPI daily proxy/gi, 'KOSPI 일별 프록시'],
+  [/Unofficial and not exchange-approved/gi, '비공식이며 거래소 승인 데이터가 아님'],
+  [/downside-probability-input/gi, '하락확률 입력'],
+  [/index-proxy-not-futures/gi, '지수 프록시 · 선물 아님'],
+  [/macro-fx-context/gi, '환율 맥락'],
   [/\bNo\b/gi, '아니오'],
   [/\bYes\b/gi, '예'],
   [/\bNone yet\b/gi, '아직 없음'],
@@ -133,6 +147,27 @@ function formatInterval(intervalMs) {
   if (!Number.isFinite(intervalMs)) return '알 수 없음';
   if (intervalMs < 60_000) return `${Math.round(intervalMs / 1000)}초`;
   return `${Math.round(intervalMs / 60_000)}분`;
+}
+
+function formatPct(value, digits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '사용 불가';
+  const prefix = number > 0 ? '+' : '';
+  return `${prefix}${number.toFixed(digits)}%`;
+}
+
+function formatMarketNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '사용 불가';
+  return number.toLocaleString('en-US', { maximumFractionDigits: number >= 100 ? 2 : 4 });
+}
+
+function movementClass(changePct) {
+  const number = Number(changePct);
+  if (!Number.isFinite(number)) return 'movement-unavailable';
+  if (number < -0.05) return 'movement-down';
+  if (number > 0.05) return 'movement-up';
+  return 'movement-flat';
 }
 
 function clampPct(value) {
@@ -216,6 +251,108 @@ function renderProbability(probability = {}) {
     const item = document.createElement('li');
     item.textContent = '필수 입력이 들어오기 전까지 기여도 목록은 표시하지 않습니다.';
     list.append(item);
+  }
+}
+
+function renderMiniChart(instrument) {
+  const node = $('#market-chart');
+  node.replaceChildren();
+  if (!instrument?.bars?.length) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = '1분봉 차트 데이터를 사용할 수 없습니다.';
+    node.setAttribute('aria-label', '1분봉 차트 데이터 사용 불가');
+    node.append(empty);
+    return;
+  }
+
+  const bars = instrument.bars;
+  const closes = bars.map((bar) => Number(bar.close)).filter(Number.isFinite);
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const range = max - min || 1;
+  const stride = Math.max(1, Math.ceil(bars.length / 72));
+  const stage = document.createElement('div');
+  stage.className = 'sparkline';
+  bars.filter((_, index) => index % stride === 0 || index === bars.length - 1).forEach((bar) => {
+    const point = document.createElement('span');
+    const y = 100 - ((bar.close - min) / range) * 100;
+    point.style.setProperty('--y', `${Math.max(2, Math.min(98, y)).toFixed(2)}%`);
+    stage.append(point);
+  });
+
+  const caption = document.createElement('div');
+  caption.className = 'chart-caption';
+  caption.textContent = `${instrument.label} · ${instrument.symbol} · 최근 ${bars.length}개 1분봉 · 현재 ${formatMarketNumber(instrument.last)} · 당일 ${formatPct(instrument.changePct)}`;
+  node.setAttribute('aria-label', caption.textContent);
+  node.append(stage, caption);
+}
+
+function renderMarketPulse(marketPulse = {}) {
+  const status = marketPulse.status ?? 'unavailable';
+  const summary = $('#market-pulse-summary');
+  summary.className = `status ${statusClass(status)}`;
+  summary.textContent = `${labelStatus(status)} · ${translateText(marketPulse.label ?? '시장 프록시 미설정')}`;
+  setText('#market-pulse-caveat', translateText(marketPulse.caveat ?? 'KRX 선물/OI/숏 관련 데이터가 연결되기 전까지 프록시 차트만 표시합니다.'));
+
+  const meta = $('#market-pulse-meta');
+  meta.replaceChildren();
+  for (const [label, value] of [
+    ['소스', marketPulse.source ?? 'unknown'],
+    ['관측', marketPulse.observedAt ?? '타임스탬프 없음'],
+  ]) {
+    const item = document.createElement('span');
+    item.textContent = `${label}: ${translateText(value)}`;
+    meta.append(item);
+  }
+
+  const primary = marketPulse.instruments?.find((instrument) => instrument.key === marketPulse.primaryKey)
+    ?? marketPulse.instruments?.find((instrument) => instrument.key === 'kospi200')
+    ?? marketPulse.instruments?.[0];
+  renderMiniChart(primary);
+
+  const grid = $('#market-movement-grid');
+  grid.replaceChildren();
+  for (const instrument of marketPulse.instruments ?? []) {
+    const tile = document.createElement('div');
+    const label = document.createElement('strong');
+    const value = document.createElement('span');
+    const detail = document.createElement('small');
+    tile.className = `movement-tile ${movementClass(instrument.changePct)}`;
+    label.textContent = `${instrument.label} · ${instrument.symbol}`;
+    value.textContent = `${formatMarketNumber(instrument.last)} · ${formatPct(instrument.changePct)}`;
+    detail.textContent = `5분 ${formatPct(instrument.momentum5mPct)} · 20분 ${formatPct(instrument.momentum20mPct)} · 범위 ${formatPct(instrument.rangePct)} · ${translateText(instrument.role)}`;
+    tile.append(label, value, detail);
+    grid.append(tile);
+  }
+  if ((marketPulse.instruments ?? []).length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = '시장 1분봉 프록시가 없습니다.';
+    grid.append(empty);
+  }
+}
+
+function renderDownsideInputs(inputs = []) {
+  const node = $('#downside-input-grid');
+  node.replaceChildren();
+  for (const input of inputs) {
+    const tile = document.createElement('div');
+    const label = document.createElement('strong');
+    const value = document.createElement('span');
+    const detail = document.createElement('small');
+    tile.className = `downside-input ${statusClass(input.status)}`;
+    label.textContent = input.label ?? labelField(input.key);
+    value.textContent = translateText(input.value ?? '사용 불가');
+    detail.textContent = `${translateText(input.role ?? '')} · ${translateText(input.detail ?? '')}`.trim();
+    tile.append(label, value, detail);
+    node.append(tile);
+  }
+  if (!inputs.length) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = '하락확률 입력 근거가 아직 없습니다.';
+    node.append(empty);
   }
 }
 
@@ -388,6 +525,15 @@ function renderFetchFailure(message) {
     blockers: [safeMessage],
     checks: [],
   });
+  renderMarketPulse({
+    status: 'error',
+    source: 'dashboard-api',
+    label: '대시보드 API 사용 불가',
+    observedAt: null,
+    instruments: [],
+    caveat: safeMessage,
+  });
+  renderDownsideInputs([]);
   renderExpiry({});
   renderDerivativesMarket({ summary: '대시보드 API가 응답하지 않아 파생상품 커버리지를 사용할 수 없습니다.', metrics: [] });
   renderFreshness({
@@ -481,6 +627,8 @@ async function loadDashboard(force = false) {
   try {
     const dashboard = await (await fetch(apiUrl(`/api/dashboard${force ? '?force=true' : ''}`))).json();
     renderProbability(dashboard.probability);
+    renderMarketPulse(dashboard.marketPulse);
+    renderDownsideInputs(dashboard.downsideInputs);
     renderQuantReadiness(dashboard.quantReadiness);
     renderProductionReadiness(dashboard.productionReadiness);
     renderExpiry(dashboard.expirySettlement);
