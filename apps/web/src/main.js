@@ -343,33 +343,99 @@ function chartColorsFor(changePct) {
   return { line: '#f5b13d', area: 'rgba(245, 177, 61, 0.18)' };
 }
 
-function toLineData(bars) {
-  const points = [];
+// Pure: format a Lightweight-Charts time (UTCTimestamp seconds or BusinessDay) in KST (Asia/Seoul).
+export function formatKstTime(time, withDate = false) {
+  const seconds = typeof time === 'number'
+    ? time
+    : (time && typeof time === 'object' && Number.isFinite(time.year))
+      ? Date.UTC(time.year, (time.month || 1) - 1, time.day || 1) / 1000
+      : NaN;
+  if (!Number.isFinite(seconds)) return '';
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false, month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date(seconds * 1000));
+    const get = (type) => parts.find((part) => part.type === type)?.value ?? '';
+    const hm = `${get('hour')}:${get('minute')}`;
+    return withDate ? `${get('month')}/${get('day')} ${hm}` : hm;
+  } catch {
+    return '';
+  }
+}
+
+function toSeriesData(bars) {
+  const line = [];
+  const volume = [];
   let lastTime = -Infinity;
+  let prevClose = null;
+  let hi = -Infinity;
+  let lo = Infinity;
   for (const bar of bars) {
     const value = Number(bar.close);
     const seconds = Math.floor(Date.parse(bar.time) / 1000);
     if (!Number.isFinite(value) || !Number.isFinite(seconds) || seconds <= lastTime) continue;
     lastTime = seconds;
-    points.push({ time: seconds, value });
+    line.push({ time: seconds, value });
+    if (value > hi) hi = value;
+    if (value < lo) lo = value;
+    const vol = Number(bar.volume);
+    if (Number.isFinite(vol) && vol > 0) {
+      const up = prevClose == null || value >= prevClose;
+      volume.push({ time: seconds, value: vol, color: up ? 'rgba(74, 240, 122, 0.5)' : 'rgba(255, 95, 86, 0.5)' });
+    }
+    prevClose = value;
   }
-  return points;
+  return { line, volume, hi: hi === -Infinity ? null : hi, lo: lo === Infinity ? null : lo };
 }
 
-function renderMiniChart(instrument) {
+function renderChartLegend(instrument = {}, marketPulse = {}) {
+  const node = $('#chart-legend');
+  if (!node) return;
+  const parts = [];
+  if (Number.isFinite(instrument.changePct)) {
+    parts.push(`현물 ${formatPct(instrument.changePct)} → 인버스 ${formatPct(-instrument.changePct)} (근사, 베이시스·수수료 제외)`);
+  }
+  parts.push(marketPulse.isFuturesPrimary ? '선물 시리즈 표시' : '현물 지수 프록시 · 선물 아님');
+  if (Number.isFinite(marketPulse.futuresBasis)) {
+    parts.push(`베이시스 선물−현물 ${marketPulse.futuresBasis > 0 ? '+' : ''}${marketPulse.futuresBasis}pt`);
+    if (Number.isFinite(marketPulse.impliedFuturesLevel)) parts.push(`내재 선물가 ${formatMarketNumber(marketPulse.impliedFuturesLevel)}`);
+  } else {
+    parts.push('베이시스: KRX 연결 시 표시');
+  }
+  node.textContent = parts.join('  ·  ');
+}
+
+function updateCrosshairTooltip(param) {
+  if (!chartState?.tooltip) return;
+  const tip = chartState.tooltip;
+  const price = param?.seriesData?.get?.(chartState.series)?.value;
+  if (!param?.point || param.time == null || !Number.isFinite(price)) {
+    tip.hidden = true;
+    return;
+  }
+  const vs = Number.isFinite(chartState.prevClose) ? (price / chartState.prevClose - 1) * 100 : null;
+  tip.textContent = `${formatKstTime(param.time)} KST · ${formatMarketNumber(price)}${vs == null ? '' : ` · 전일대비 ${formatPct(vs)}`}`;
+  tip.hidden = false;
+  tip.style.left = `${param.point.x}px`;
+  tip.style.top = `${param.point.y}px`;
+}
+
+function renderMiniChart(instrument, marketPulse = {}) {
   const node = $('#market-chart');
   if (!node) return;
   const bars = instrument?.bars ?? [];
+  const closed = Boolean(marketPulse.closed);
   const caption = bars.length
-    ? `${instrument.label} · ${instrument.symbol} · 최근 ${bars.length}개 1분봉 · 현재 ${formatMarketNumber(instrument.last)} · 당일 ${formatPct(instrument.changePct)}`
+    ? `${instrument.label} · ${instrument.symbol} · 최근 ${bars.length}개 1분봉(KST) · 현재 ${formatMarketNumber(instrument.last)} · 당일 ${formatPct(instrument.changePct)}`
     : '1분봉 차트 데이터를 사용할 수 없습니다.';
   node.setAttribute('aria-label', bars.length ? caption : '1분봉 차트 데이터 사용 불가');
+  renderChartLegend(instrument, marketPulse);
 
   const lib = typeof window !== 'undefined' ? window.LightweightCharts : undefined;
-  const points = bars.length ? toLineData(bars) : [];
+  const data = bars.length ? toSeriesData(bars) : { line: [], volume: [], hi: null, lo: null };
 
   // Fallback for test/SSR (no window/lib) or insufficient data: text caption only.
-  if (!lib?.createChart || points.length < 2) {
+  if (!lib?.createChart || data.line.length < 2) {
     destroyMarketChart();
     node.replaceChildren();
     const text = document.createElement('p');
@@ -379,31 +445,65 @@ function renderMiniChart(instrument) {
     return;
   }
 
-  const colors = chartColorsFor(instrument.changePct);
+  const colors = closed ? { line: '#6b8f74', area: 'rgba(107, 143, 116, 0.12)' } : chartColorsFor(instrument.changePct);
   if (!chartState) {
     node.replaceChildren();
     const mount = document.createElement('div');
     mount.className = 'market-chart-canvas';
+    const banner = document.createElement('div');
+    banner.className = 'chart-banner';
+    banner.hidden = true;
+    const tooltip = document.createElement('div');
+    tooltip.className = 'chart-tooltip';
+    tooltip.hidden = true;
     const captionEl = document.createElement('div');
     captionEl.className = 'chart-caption';
+    mount.append(banner, tooltip);
     node.append(mount, captionEl);
     const chart = lib.createChart(mount, {
       autoSize: true,
       layout: { background: { type: 'solid', color: '#060a06' }, textColor: '#5d7d63', fontFamily: 'monospace', fontSize: 11 },
       grid: { vertLines: { color: '#11231a' }, horzLines: { color: '#11231a' } },
-      rightPriceScale: { borderColor: '#1d3322' },
-      timeScale: { borderColor: '#1d3322', timeVisible: true, secondsVisible: false },
-      crosshair: { mode: 0 },
+      rightPriceScale: { borderColor: '#1d3322', scaleMargins: { top: 0.08, bottom: 0.28 } },
+      timeScale: { borderColor: '#1d3322', timeVisible: true, secondsVisible: false, tickMarkFormatter: (time) => formatKstTime(time) },
+      localization: { timeFormatter: (time) => formatKstTime(time, true) },
+      crosshair: { mode: 1 },
       handleScroll: false,
       handleScale: false,
     });
-    const series = chart.addAreaSeries({ lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false });
-    chartState = { chart, series, captionEl };
+    const series = chart.addAreaSeries({ lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: true });
+    const volumeSeries = chart.addHistogramSeries({ priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
+    chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    chartState = { chart, series, volumeSeries, captionEl, banner, tooltip, priceLines: [], prevClose: null };
+    chart.subscribeCrosshairMove(updateCrosshairTooltip);
   }
+
   chartState.series.applyOptions({ lineColor: colors.line, topColor: colors.area, bottomColor: 'rgba(6, 10, 6, 0)' });
-  chartState.series.setData(points);
+  chartState.series.setData(data.line);
+  chartState.volumeSeries.setData(data.volume);
+  chartState.prevClose = Number.isFinite(instrument.previousClose) ? instrument.previousClose : null;
+
+  for (const line of chartState.priceLines) {
+    try { chartState.series.removePriceLine(line); } catch { /* gone */ }
+  }
+  chartState.priceLines = [];
+  const addLine = (price, title, color, lineStyle) => {
+    if (!Number.isFinite(price)) return;
+    chartState.priceLines.push(chartState.series.createPriceLine({ price, title, color, lineWidth: 1, lineStyle, axisLabelVisible: true }));
+  };
+  addLine(instrument.previousClose, '전일종가', '#f5b13d', 2);
+  addLine(data.hi, '당일고', '#3a6b4a', 0);
+  addLine(data.lo, '당일저', '#3a6b4a', 0);
+  addLine(marketPulse.impliedFuturesLevel, '내재선물', '#46c6c6', 1);
+
   chartState.chart.timeScale().fitContent();
   chartState.captionEl.textContent = caption;
+  if (closed && marketPulse.marketDateLabel) {
+    chartState.banner.textContent = `LAST SESSION ${marketPulse.marketDateLabel} · 장 마감`;
+    chartState.banner.hidden = false;
+  } else {
+    chartState.banner.hidden = true;
+  }
 }
 
 function renderMarketPulse(marketPulse = {}) {
@@ -427,7 +527,7 @@ function renderMarketPulse(marketPulse = {}) {
   const primary = marketPulse.instruments?.find((instrument) => instrument.key === marketPulse.primaryKey)
     ?? marketPulse.instruments?.find((instrument) => instrument.key === 'kospi200')
     ?? marketPulse.instruments?.[0];
-  renderMiniChart(primary);
+  renderMiniChart(primary, marketPulse);
 
   const grid = $('#market-movement-grid');
   grid.replaceChildren();

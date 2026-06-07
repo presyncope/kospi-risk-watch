@@ -476,7 +476,7 @@ function yahooChartPayload({ symbol, points, previousClose }) {
           regularMarketPrice: closes.at(-1),
         },
         timestamp: points.map((point) => epoch(point.time)),
-        indicators: { quote: [{ close: closes }] },
+        indicators: { quote: [{ close: closes, volume: points.map((point) => point.volume ?? null) }] },
       }],
       error: null,
     },
@@ -509,9 +509,9 @@ test('Yahoo Finance proxy adapter exposes intraday market pulse without live-rea
       symbol: '^KS200',
       previousClose: 320,
       points: [
-        { time: '2026-06-08T05:58:00Z', close: 320.5 },
-        { time: '2026-06-08T05:59:00Z', close: 320.8 },
-        { time: '2026-06-08T06:00:00Z', close: 321.1 },
+        { time: '2026-06-08T05:58:00Z', close: 320.5, volume: 1200 },
+        { time: '2026-06-08T05:59:00Z', close: 320.8, volume: 1500 },
+        { time: '2026-06-08T06:00:00Z', close: 321.1, volume: 1800 },
       ],
     })],
     ['KRW=X|1m', yahooChartPayload({
@@ -547,7 +547,9 @@ test('Yahoo Finance proxy adapter exposes intraday market pulse without live-rea
   assert.equal(snapshot.fields.kospi200Intraday.freshness, FRESHNESS.FRESH);
   assert.equal(snapshot.values.marketPulse.primaryKey, 'kospi200');
   assert.equal(snapshot.values.marketPulse.instruments.length, 3);
-  assert.ok(snapshot.values.marketPulse.instruments.find((instrument) => instrument.key === 'kospi200').bars.length >= 3);
+  const kospi200Instrument = snapshot.values.marketPulse.instruments.find((instrument) => instrument.key === 'kospi200');
+  assert.ok(kospi200Instrument.bars.length >= 3);
+  assert.ok(kospi200Instrument.bars.some((bar) => Number.isFinite(bar.volume) && bar.volume > 0));
   assert.ok(fetchCalls.some((call) => call.symbol === '^KS200' && call.interval === '1m'));
 
   await withServer(createAppServer({ adapter }), async (baseUrl) => {
@@ -559,6 +561,49 @@ test('Yahoo Finance proxy adapter exposes intraday market pulse without live-rea
     assert.equal(dashboard.sourceStatus.mode, 'external-source-unapproved');
     assert.equal(dashboard.productionReadiness.liveReady, false);
     assert.equal(dashboard.productionReadiness.safeToServe, true);
+  });
+});
+
+test('dashboard market pulse passes through futures basis and derives implied futures level', async () => {
+  const observedAt = '2026-06-06T06:00:00Z';
+  const adapter = {
+    source: 'basis-test-adapter',
+    async getSnapshot() {
+      return normalizeAdapterResult({
+        source: this.source,
+        observedAt,
+        freshness: FRESHNESS.FRESH,
+        fields: {
+          kospiDaily: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
+          historicalMondayDownRate: { source: this.source, observedAt, freshness: FRESHNESS.FRESH },
+        },
+        values: {
+          historicalMondayDownRate: 0.5,
+          futuresBasis: -0.42,
+          marketPulse: {
+            status: FRESHNESS.FRESH,
+            source: this.source,
+            primaryKey: 'kospi200',
+            instruments: [
+              {
+                key: 'kospi200', label: 'KOSPI200', symbol: '^KS200', last: 320, previousClose: 322, changePct: -0.62,
+                bars: [
+                  { time: '2026-06-06T05:59:00Z', close: 320.5, volume: 1000 },
+                  { time: '2026-06-06T06:00:00Z', close: 320, volume: 1200 },
+                ],
+              },
+            ],
+          },
+        },
+      });
+    },
+  };
+  await withServer(createAppServer({ adapter }), async (baseUrl) => {
+    const dashboard = await (await fetch(`${baseUrl}/api/dashboard?force=true`)).json();
+    assert.equal(dashboard.marketPulse.futuresBasis, -0.42);
+    assert.equal(dashboard.marketPulse.impliedFuturesLevel, 319.58);
+    assert.equal(dashboard.marketPulse.isFuturesPrimary, false);
+    assert.ok(dashboard.marketPulse.instruments[0].bars.some((bar) => Number.isFinite(bar.volume)));
   });
 });
 

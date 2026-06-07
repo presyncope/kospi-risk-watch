@@ -351,7 +351,12 @@ test('UI module renders dashboard state and polling control with mocked APIs', a
     };
 
     const moduleUrl = `${pathToFileURL(process.cwd())}/apps/web/src/main.js?test=${Date.now()}`;
-    await import(moduleUrl);
+    const mod = await import(moduleUrl);
+
+    // formatKstTime: UTC epoch seconds rendered in Asia/Seoul (UTC+9)
+    assert.equal(typeof mod.formatKstTime, 'function');
+    assert.equal(mod.formatKstTime(Date.parse('2026-06-05T06:00:00Z') / 1000), '15:00');
+    assert.equal(mod.formatKstTime(Date.parse('2026-06-05T00:00:00Z') / 1000, true), '06/05 09:00');
 
     assert.equal(elements.get('#polling-interval').value, '60000');
     assert.match(elements.get('#polling-state').textContent, /활성 · 1분 주기/);
