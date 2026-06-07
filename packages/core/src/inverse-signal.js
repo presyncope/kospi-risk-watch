@@ -124,6 +124,7 @@ export function buildInverseSignal({
       exitGuide: exitGuideFor(INVERSE_STANCES.UNAVAILABLE),
       positionSizingHint: sizingHint(INVERSE_STANCES.REDUCE, null, volatilityZScore),
       caveat: '하락 확률 입력이 사용 불가 상태입니다.',
+      unvalidated: Boolean(probability.unvalidated),
       disclaimer,
     };
   }
@@ -186,6 +187,7 @@ export function buildInverseSignal({
     exitGuide: exitGuideFor(stance),
     positionSizingHint: sizingHint(stance, signalStrength, volatilityZScore),
     caveat: caveatParts.join(' ') || '관찰 데이터 기준 참고 신호입니다.',
+    unvalidated: Boolean(probability.unvalidated),
     disclaimer,
   };
 }

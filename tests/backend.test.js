@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { createAppServer } from '../apps/api/src/server.js';
 import { loadEnvFile, parseEnvFileContent } from '../apps/api/src/env.js';
 import { FRESHNESS } from '../packages/core/src/index.js';
-import { createAdapterFromEnv, createJsonHttpMarketDataAdapter, createKrxOpenApiMarketDataAdapter, createMockMarketDataAdapter, createUnavailableAdapter, createYahooFinanceMarketDataAdapter, normalizeAdapterResult } from '../packages/data-adapters/src/index.js';
+import { createAdapterFromEnv, createCompositeMarketDataAdapter, createFredMacroProvider, createJsonHttpMarketDataAdapter, createKrxOpenApiMarketDataAdapter, createMockMarketDataAdapter, createUnavailableAdapter, createYahooFinanceMarketDataAdapter, normalizeAdapterResult } from '../packages/data-adapters/src/index.js';
 
 async function withServer(server, fn) {
   await new Promise((resolve) => server.listen(0, resolve));
@@ -561,6 +561,40 @@ test('Yahoo Finance proxy adapter exposes intraday market pulse without live-rea
     assert.equal(dashboard.sourceStatus.mode, 'external-source-unapproved');
     assert.equal(dashboard.productionReadiness.liveReady, false);
     assert.equal(dashboard.productionReadiness.safeToServe, true);
+  });
+});
+
+test('FRED macro provider parses VIX, US equity change, and 10Y yield', async () => {
+  const responses = {
+    VIXCLS: { observations: [{ date: '2026-06-05', value: '22.5' }] },
+    SP500: { observations: [{ date: '2026-06-05', value: '5100' }, { date: '2026-06-04', value: '5150' }] },
+    DGS10: { observations: [{ date: '2026-06-05', value: '4.3' }] },
+  };
+  const provider = createFredMacroProvider({
+    apiKey: 'test-key',
+    fetchImpl: async (url) => {
+      const seriesId = new URL(url).searchParams.get('series_id');
+      return { ok: true, text: async () => JSON.stringify(responses[seriesId] ?? { observations: [] }) };
+    },
+  });
+  const macro = await provider();
+  assert.equal(macro.values.vixLevel, 22.5);
+  assert.equal(macro.values.usEquityChangePct, Number(((5100 / 5150 - 1) * 100).toFixed(4)));
+  assert.equal(macro.values.us10yYield, 4.3);
+  assert.equal(macro.fields.vix.source, 'fred');
+});
+
+test('composite adapter merges macro values onto the base snapshot and flags unvalidated probability', async () => {
+  const provider = async () => ({ values: { vixLevel: 25 }, fields: { vix: { source: 'fred', freshness: FRESHNESS.FRESH } } });
+  const composite = createCompositeMarketDataAdapter({ base: createMockMarketDataAdapter(), providers: [provider] });
+  await withServer(createAppServer({ adapter: composite }), async (baseUrl) => {
+    const snapshot = await (await fetch(`${baseUrl}/api/snapshot?force=true`)).json();
+    assert.equal(snapshot.values.vixLevel, 25);
+    assert.equal(snapshot.fields.vix.source, 'fred');
+    const dashboard = await (await fetch(`${baseUrl}/api/dashboard?force=true`)).json();
+    assert.equal(dashboard.probability.unvalidated, true);
+    assert.ok(dashboard.probability.contributions.some((c) => c.input === 'vixLevel'));
+    assert.ok(dashboard.downsideInputs.some((input) => input.key === 'vixLevel'));
   });
 });
 

@@ -769,6 +769,36 @@ test('inverse signal is unavailable and lowers confidence on closed-market data'
   assert.match(closed.caveat, /장 마감/);
 });
 
+test('downside probability adds uncalibrated macro adjustments and flags unvalidated', () => {
+  const freshProvenance = {
+    kospiDaily: { freshness: FRESHNESS.FRESH },
+    historicalMondayDownRate: { freshness: FRESHNESS.FRESH },
+  };
+  const base = computeDownsideProbability({ historicalMondayDownRate: 0.4, provenance: freshProvenance });
+  assert.equal(base.unvalidated, false);
+  assert.equal(base.probability, 40);
+
+  const withMacro = computeDownsideProbability({
+    historicalMondayDownRate: 0.4,
+    vixLevel: 30,
+    usEquityChangePct: -2,
+    provenance: { ...freshProvenance, vix: { freshness: FRESHNESS.FRESH }, usEquity: { freshness: FRESHNESS.FRESH } },
+  });
+  assert.equal(withMacro.unvalidated, true);
+  assert.ok(withMacro.probability > base.probability);
+  assert.ok(withMacro.contributions.some((c) => c.input === 'vixLevel' && c.points > 0));
+  assert.ok(withMacro.contributions.some((c) => c.input === 'usEquityChangePct' && c.points > 0));
+
+  // Stale macro provenance is ignored (no contribution, not flagged).
+  const staleMacro = computeDownsideProbability({
+    historicalMondayDownRate: 0.4,
+    vixLevel: 30,
+    provenance: { ...freshProvenance, vix: { freshness: FRESHNESS.STALE } },
+  });
+  assert.equal(staleMacro.unvalidated, false);
+  assert.equal(staleMacro.probability, 40);
+});
+
 test('risk alerts fire for inverse entry, intraday drop, volatility, and expiry', () => {
   const inverseSignal = buildInverseSignal(strongDownsideContext());
   const alerts = buildRiskAlerts({
