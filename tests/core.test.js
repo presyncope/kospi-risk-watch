@@ -7,6 +7,7 @@ import {
   INVERSE_STANCES,
   PROBABILITY_STATUS,
   PRODUCTION_READINESS_STATUS,
+  backtestMondayDownside,
   buildDerivativesMarketContext,
   buildExpirySettlementRisk,
   buildInverseSignal,
@@ -767,6 +768,32 @@ test('inverse signal is unavailable and lowers confidence on closed-market data'
   });
   assert.equal(closed.confidence, 'low');
   assert.match(closed.caveat, /장 마감/);
+});
+
+test('Monday-downside backtest is walk-forward and reports calibration with sample size', () => {
+  // Thin series -> insufficient sample, not a misleading metric.
+  const tiny = [{ date: '2026-06-01', close: 100 }, { date: '2026-06-08', close: 99 }];
+  assert.equal(backtestMondayDownside(tiny).sufficient, false);
+
+  // ~2 years of weekday closes (deterministic pseudo-walk, Mondays slightly down-biased).
+  const series = [];
+  let close = 100;
+  const start = Date.UTC(2024, 0, 1);
+  for (let i = 0; i < 540; i += 1) {
+    const day = new Date(start + i * 86_400_000);
+    const dow = day.getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    close = Math.max(1, close + (dow === 1 ? -0.3 : 0.2) + Math.sin(i) * 0.5);
+    series.push({ date: day.toISOString().slice(0, 10), close: Number(close.toFixed(2)) });
+  }
+  const backtest = backtestMondayDownside(series);
+  assert.equal(backtest.sufficient, true);
+  assert.ok(backtest.sampleSize >= 30);
+  assert.ok(backtest.brierScore >= 0 && backtest.brierScore <= 1);
+  assert.ok(backtest.baseRate >= 0 && backtest.baseRate <= 1);
+  assert.ok(['positive-skill', 'no-skill', 'negative-skill'].includes(backtest.verdict));
+  assert.ok(Array.isArray(backtest.calibration) && backtest.calibration.length >= 1);
+  assert.equal(backtest.calibration.reduce((sum, bucket) => sum + bucket.count, 0), backtest.sampleSize);
 });
 
 test('downside probability adds uncalibrated macro adjustments and flags unvalidated', () => {

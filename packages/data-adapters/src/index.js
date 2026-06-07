@@ -1,4 +1,4 @@
-import { FRESHNESS, createProvenance, sanitizePublicDiagnosticText } from '../../core/src/index.js';
+import { FRESHNESS, backtestMondayDownside, createProvenance, sanitizePublicDiagnosticText } from '../../core/src/index.js';
 import { createCompositeMarketDataAdapter, createEcosMacroProvider, createFredMacroProvider } from './macro.js';
 import { createKisFuturesProvider } from './kis.js';
 
@@ -80,6 +80,7 @@ const ADAPTER_VALUE_SCHEMA = Object.freeze({
   bokBaseRate: { type: 'number' },
   usdKrwRate: { type: 'number' },
   ktb3yYield: { type: 'number' },
+  probabilityBacktest: { type: 'backtest' },
   futuresBasis: { type: 'number' },
   futuresOpenInterest: { type: 'number' },
   futuresVolume: { type: 'number' },
@@ -135,6 +136,34 @@ function normalizeMarketPulseValue(value) {
     primaryKey: MARKET_PULSE_INSTRUMENT_KEYS.has(value.primaryKey) ? value.primaryKey : instruments[0].key,
     instruments,
   };
+}
+
+const BACKTEST_VERDICTS = new Set(['positive-skill', 'negative-skill', 'no-skill', 'insufficient-sample']);
+
+function normalizeBacktestValue(value) {
+  if (!isRecord(value)) return undefined;
+  const finite = (candidate) => (Number.isFinite(candidate) ? candidate : null);
+  const out = {
+    sampleSize: Number.isFinite(value.sampleSize) ? value.sampleSize : 0,
+    sufficient: value.sufficient === true,
+    verdict: BACKTEST_VERDICTS.has(value.verdict) ? value.verdict : 'insufficient-sample',
+  };
+  for (const key of ['baseRate', 'meanPredicted', 'brierScore', 'climatologyBrier', 'brierSkillScore']) {
+    if (Number.isFinite(value[key])) out[key] = value[key];
+  }
+  if (Array.isArray(value.calibration)) {
+    out.calibration = value.calibration
+      .filter(isRecord)
+      .slice(0, 12)
+      .map((bucket) => ({
+        from: finite(bucket.from),
+        to: finite(bucket.to),
+        count: Number.isFinite(bucket.count) ? bucket.count : 0,
+        predictedAvg: finite(bucket.predictedAvg),
+        actualRate: finite(bucket.actualRate),
+      }));
+  }
+  return out;
 }
 
 function unavailableFields(source, observedAt, { freshness = FRESHNESS.UNAVAILABLE, details = null } = {}) {
@@ -217,6 +246,10 @@ function normalizeAdapterValues(values = {}) {
     if (schema.type === 'market-pulse') {
       const marketPulse = normalizeMarketPulseValue(value);
       if (marketPulse) normalized[key] = marketPulse;
+    }
+    if (schema.type === 'backtest') {
+      const backtest = normalizeBacktestValue(value);
+      if (backtest) normalized[key] = backtest;
     }
   }
   return normalized;
@@ -788,6 +821,7 @@ export function createYahooFinanceMarketDataAdapter({
   symbols = {},
   intradayRange = '1d',
   dailyRange = '6mo',
+  backtestRange = '5y',
   fetchImpl = globalThis.fetch,
   timeoutMs = 5_000,
   maxBodyBytes = 768 * 1024,
@@ -813,6 +847,7 @@ export function createYahooFinanceMarketDataAdapter({
 
       const requests = {
         kospiDaily: fetchYahooChart({ symbol: configuredSymbols.kospi, range: dailyRange, interval: '1d', fetchImpl, timeoutMs, maxBodyBytes }),
+        kospiBacktest: fetchYahooChart({ symbol: configuredSymbols.kospi, range: backtestRange, interval: '1d', fetchImpl, timeoutMs, maxBodyBytes }),
         kospiIntraday: fetchYahooChart({ symbol: configuredSymbols.kospi, range: intradayRange, interval: '1m', fetchImpl, timeoutMs, maxBodyBytes }),
         kospi200Intraday: fetchYahooChart({ symbol: configuredSymbols.kospi200, range: intradayRange, interval: '1m', fetchImpl, timeoutMs, maxBodyBytes }),
         usdKrwIntraday: fetchYahooChart({ symbol: configuredSymbols.usdKrw, range: intradayRange, interval: '1m', fetchImpl, timeoutMs, maxBodyBytes }),
@@ -854,6 +889,11 @@ export function createYahooFinanceMarketDataAdapter({
         }
         const dailyChange = pctChange(kospiSeries.at(-1)?.close, kospiSeries.at(-2)?.close);
         if (Number.isFinite(dailyChange)) values.lastDailyChangePct = roundMetric(dailyChange, 4);
+      }
+
+      const backtestSeries = yahooDailySeries(results.kospiBacktest);
+      if (backtestSeries.length >= 60) {
+        values.probabilityBacktest = backtestMondayDownside(backtestSeries);
       }
 
       const instruments = [];
@@ -1191,6 +1231,7 @@ export function createAdapterFromEnv(env = process.env) {
       },
       intradayRange: env.YAHOO_FINANCE_INTRADAY_RANGE || '1d',
       dailyRange: env.YAHOO_FINANCE_DAILY_RANGE || '6mo',
+      backtestRange: env.YAHOO_FINANCE_BACKTEST_RANGE || '5y',
       timeoutMs: parsePositiveNumber(env.YAHOO_FINANCE_TIMEOUT_MS, parsePositiveNumber(env.MARKET_DATA_TIMEOUT_MS, 5_000)),
       maxBodyBytes: parsePositiveNumber(env.YAHOO_FINANCE_MAX_BODY_BYTES, parsePositiveNumber(env.MARKET_DATA_MAX_BODY_BYTES, 768 * 1024)),
     }), env);

@@ -311,6 +311,20 @@ function renderSystemStatusLine(quant = {}, production = {}) {
   setText('#system-status-line', `${labelStatus(production?.status ?? 'unknown')} · 퀀트 ${quantScore} · ${safe}`);
 }
 
+const BACKTEST_VERDICT_LABELS = new Map([
+  ['positive-skill', '유의미한 예측력'],
+  ['no-skill', '예측력 미미(기준율 수준)'],
+  ['negative-skill', '역효과(과적합 의심)'],
+  ['insufficient-sample', '표본 부족'],
+]);
+
+function backtestSummary(backtest) {
+  if (!backtest) return '데이터 부족(미실행)';
+  if (!backtest.sufficient) return `표본 부족 — 과거 월요일 ${backtest.sampleSize ?? 0}회`;
+  const verdict = BACKTEST_VERDICT_LABELS.get(backtest.verdict) ?? backtest.verdict;
+  return `과거 월요일 ${backtest.sampleSize}회 · Brier ${backtest.brierScore} · skill ${backtest.brierSkillScore} · ${verdict} (walk-forward, 매크로 제외)`;
+}
+
 function renderProbability(probability = {}) {
   const value = renderProbabilityValue(probability);
   setText('#probability-value', value);
@@ -324,6 +338,7 @@ function renderProbability(probability = {}) {
     ['누락 입력', probability.missingInputs?.length ? probability.missingInputs.map(labelField).join(', ') : '없음'],
     ['제한 사유', probability.degradedReasons?.length ? probability.degradedReasons.map(translateText).join('; ') : '없음'],
     ['소스 상태', labelStatus(probability.sourceFreshnessSummary?.overall ?? 'unknown')],
+    ['신호 검증(백테스트)', backtestSummary(probability.backtest)],
   ]);
   const list = $('#probability-contributions');
   list.replaceChildren();
