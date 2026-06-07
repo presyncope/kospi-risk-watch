@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { NON_ADVICE_NOTICE, normalizePollingConfig } from '../../../packages/core/src/index.js';
 import { createAdapterFromEnv } from '../../../packages/data-adapters/src/index.js';
 import { buildDashboardState } from './dashboard.js';
+import { loadEnvFile } from './env.js';
 import { PollingCoordinator } from './polling.js';
 
 const rootDir = fileURLToPath(new URL('../../..', import.meta.url));
@@ -132,6 +133,7 @@ export function createAppServer({ adapter = createAdapterFromEnv(), pollingConfi
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  loadEnvFile();
   const port = Number(process.env.PORT ?? 4173);
   createAppServer().listen(port, () => {
     console.log(`KOSPI dashboard local server listening on http://localhost:${port}`);

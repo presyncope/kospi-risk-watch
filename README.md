@@ -39,6 +39,8 @@ The server listens on `http://localhost:4173` by default and serves both the API
 
 Optional environment variables:
 
+Runtime configuration can be supplied either through the shell/systemd environment or a repository-root `.env` file. Copy `.env.example` to `.env` for a local template. Existing shell/systemd values take precedence over `.env`; set `KOSPI_ENV_FILE=/absolute/path/to/file` to load a different file.
+
 | Variable | Values | Purpose |
 | --- | --- | --- |
 | `PORT` | number | Local server port; defaults to `4173`. |

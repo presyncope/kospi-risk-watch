@@ -7,6 +7,7 @@ Target URL: `https://nukim.dyndns.org/kospi-risk-watch/`
 - App listens on `127.0.0.1:4173` through the Node server.
 - Browser assets use relative URLs, and API calls derive `/kospi-risk-watch` from the script URL when served behind nginx.
 - Default data source remains the unavailable KRX placeholder. Do not enable mock data for public monitoring unless the page is clearly treated as a fixture/demo.
+- The Node server loads a repository-root `.env` file at process startup. Existing systemd `Environment=` values take precedence; use `KOSPI_ENV_FILE=/absolute/path/to/file` when credentials should live outside the repository.
 
 ## Root commands
 

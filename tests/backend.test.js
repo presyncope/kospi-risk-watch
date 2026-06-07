@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createAppServer } from '../apps/api/src/server.js';
+import { loadEnvFile, parseEnvFileContent } from '../apps/api/src/env.js';
 import { FRESHNESS } from '../packages/core/src/index.js';
 import { createAdapterFromEnv, createJsonHttpMarketDataAdapter, createKrxOpenApiMarketDataAdapter, createMockMarketDataAdapter, createUnavailableAdapter, normalizeAdapterResult } from '../packages/data-adapters/src/index.js';
 
@@ -13,6 +17,47 @@ async function withServer(server, fn) {
     await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   }
 }
+
+test('env parser supports comments, quotes, export syntax, and JSON-like values', () => {
+  const parsed = parseEnvFileContent(`
+# comment
+PORT=4180
+export MARKET_DATA_ADAPTER=krx-open-api
+KRX_OPEN_API_KEY="secret\\nline"
+KRX_OPEN_API_COMMON_PARAMS_JSON='{"reqType":"json"}'
+MARKET_DATA_SOURCE=approved-source # inline comment
+EMPTY_VALUE=
+`);
+  assert.equal(parsed.PORT, '4180');
+  assert.equal(parsed.MARKET_DATA_ADAPTER, 'krx-open-api');
+  assert.equal(parsed.KRX_OPEN_API_KEY, 'secret\nline');
+  assert.equal(parsed.KRX_OPEN_API_COMMON_PARAMS_JSON, '{"reqType":"json"}');
+  assert.equal(parsed.MARKET_DATA_SOURCE, 'approved-source');
+  assert.equal(parsed.EMPTY_VALUE, '');
+});
+
+test('env loader reads a .env file without overriding existing environment', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'kospi-risk-watch-env-'));
+  try {
+    const envPath = join(dir, '.env');
+    await writeFile(envPath, 'PORT=4181\nMARKET_DATA_ADAPTER=mock\n', 'utf8');
+    const env = { PORT: '9999' };
+    const result = loadEnvFile({ path: envPath, env });
+    assert.equal(result.loaded, true);
+    assert.deepEqual(result.keys, ['MARKET_DATA_ADAPTER']);
+    assert.equal(env.PORT, '9999');
+    assert.equal(env.MARKET_DATA_ADAPTER, 'mock');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('env loader ignores a missing default file', () => {
+  const env = {};
+  const result = loadEnvFile({ path: '/tmp/kospi-risk-watch-missing-env-file', env });
+  assert.equal(result.loaded, false);
+  assert.deepEqual(result.keys, []);
+});
 
 test('backend returns normalized unavailable snapshot by default adapter', async () => {
   await withServer(createAppServer({ adapter: createUnavailableAdapter('test-unavailable') }), async (baseUrl) => {
